@@ -20,7 +20,8 @@ if (isJson)
     };
 
     // Виведення єдиним JSON-рядком
-    Console.WriteLine(JsonSerializer.Serialize(systemInfo));
+    var options = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+Console.WriteLine(JsonSerializer.Serialize(systemInfo, options));
 }
 else
 {

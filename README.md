@@ -6,6 +6,7 @@
 Призначення: облік залишків товарів по партіях.
 
 ## Запуск
-```bash
-dotnet build
-dotnet run --project src/Cli
+- **Звичайний режим:**
+  ```bash
+  dotnet build
+  dotnet run --project src/Cli

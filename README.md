@@ -34,8 +34,8 @@ dotnet add src/Cli/Cli.csproj reference src/Core/Core.csproj
 dotnet sln CrossApp.slnx list
 dotnet build CrossApp.slnx
 dotnet build src/Core/Core.csproj
-dotnet run --project src/Cli
-dotnet run --project src/Cli -- --json
+dotnet run --project src/Cli --framework net10.0
+dotnet run --project src/Cli --framework net10.0 -- --json
 ```
 
 `Program.cs` не використовує `RuntimeInformation`: збір середовища належить `Core`, а CLI відповідає за вивід. Звичайний режим очікує натискання клавіші перед завершенням.

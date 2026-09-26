@@ -2,14 +2,6 @@ using System.Runtime.InteropServices;
 
 namespace Core;
 
-public sealed record EnvironmentReport(
-    string OsDescription,
-    string FrameworkDescription,
-    string ProcessArchitecture,
-    string DetectedRid,
-    string ReportedRid,
-    string BaseDirectory);
-
 public static class EnvironmentInfo
 {
     public static EnvironmentReport Collect() => new(
@@ -18,7 +10,14 @@ public static class EnvironmentInfo
         RuntimeInformation.ProcessArchitecture.ToString(),
         DetectRid(),
         RuntimeInformation.RuntimeIdentifier,
-        AppContext.BaseDirectory);
+        AppContext.BaseDirectory,
+        BuildNote);
+
+#if NET10_0_OR_GREATER
+    private const string BuildNote = "збірка під net10.0";
+#else
+    private const string BuildNote = "збірка під net8.0";
+#endif
 
     private static string DetectRid()
     {

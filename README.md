@@ -44,14 +44,14 @@ dotnet run --project src/Cli --framework net10.0 -- --json
 
 `Core` і `Cli` збираються для `net8.0` та `net10.0`. У `EnvironmentInfo` директива `#if NET10_0_OR_GREATER` додає до звіту `BuildNote`, тому рядок вказує TFM, для якого скомпільовано бібліотеку.
 
-Перевірено командою `dotnet build CrossApp.slnx`; створено `bin/Debug/net8.0` і `bin/Debug/net10.0`. Вивід `net8.0` містить `збірка під net8.0`, а `net10.0` — `збірка під net10.0`. У системі SDK `10.0.100`, встановлені .NET runtimes 9.0.11 і 10.0.12, але немає .NET 8 runtime. Для демонстрації net8-збірки застосовано major roll-forward на доступний runtime:
+Перевірено командою `dotnet build CrossApp.slnx`; створено `bin/Debug/net8.0` і `bin/Debug/net10.0`. У системі встановлено SDK `10.0.100` і runtimes `8.0.31`, `9.0.11` та `10.0.12`. Обидві збірки запущено без roll-forward:
 
 ```powershell
-$env:DOTNET_ROLL_FORWARD = "Major"
 dotnet run --no-build --project src/Cli --framework net8.0 -- --json
+dotnet run --no-build --project src/Cli --framework net10.0 -- --json
 ```
 
-У такому запуску `BuildNote` показує TFM компіляції (`net8.0`), а `FrameworkDescription` — фактично використаний runtime (`.NET 9.0.11`). Для звичайного використання net8-збірки встановіть сумісний .NET 8 runtime.
+Для `net8.0` вивід містить `BuildNote: збірка під net8.0` і `FrameworkDescription: .NET 8.0.31`; для `net10.0` — `BuildNote: збірка під net10.0` і `FrameworkDescription: .NET 10.0.12`.
 
 ## Публікація
 

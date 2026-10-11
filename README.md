@@ -1,5 +1,5 @@
 # CrossApp
-Наскрізний проєкт з крос-платформного програмування. Лабораторна 2 відокремлює спільний код бібліотеки `Core` від точки входу `Cli`.
+Наскрізний проєкт з крос-платформного програмування.
 
 ## Структура
 
@@ -7,92 +7,135 @@
 CrossApp.slnx
 README.md
 src/
-	Core/
-		Core.csproj
-		EnvironmentInfo.cs
-		EnvironmentReport.cs
-	Cli/
-		Cli.csproj
-		Program.cs
+    Core/
+        Core.csproj
+        EnvironmentInfo.cs
+        EnvironmentReport.cs
+        Dto/
+            ProductDto.cs       ← record, формат даних (лаб 3)
+            ImportResult.cs     ← record, результат імпорту (лаб 3)
+            WarehouseDto.cs     ← record, формат складу (лаб 3)
+            OrderDto.cs         ← record, формат замовлення (лаб 4)
+        Domain/                 ← НОВЕ (лаб 4): сутності з поведінкою
+            Product.cs          ← інкапсульований товар на складі
+            Order.cs            ← агрегат замовлення + захищена колекція
+            OrderLine.cs        ← рядок замовлення (internal-конструктор)
+            OrderStatus.cs      ← enum Draft / Confirmed / Cancelled
+        Import/
+            ProductCsvImporter.cs
+            ProductJsonImporter.cs
+            MixedCsvImporter.cs
+            ProductDomainMapper.cs  ← НОВЕ (лаб 4, доп.): ImportResult → Domain
+    Cli/
+        Cli.csproj
+        Program.cs
+data/
+    sample.csv
+    sample.json
+    mixed.csv
 ```
 
-`Core` — class library без точки входу. У ній `EnvironmentInfo.Collect()` збирає дані платформи й повертає `EnvironmentReport`; вона не друкує дані. `Cli` має єдину залежність `Cli -> Core`, викликає цей метод і форматує результат. Циклічної залежності немає. Цього тижня доменна модель навмисно не реалізується. Наступні каталоги Core за планом семестру: `Dto/`, `Domain/`, `Storage/`.
+## Лабораторна 4 — Доменна модель: сутності, інваріанти, інкапсуляція
+
+### Обрані сутності
+
+| Сутність | Тип | Роль |
+|:---|:---|:---|
+| `Product` | `sealed class` | Товар на складі з залишком; операції: прихід, видача |
+| `Order` | `sealed class` | Агрегат замовлення з колекцією рядків |
+| `OrderLine` | `sealed class` | Рядок замовлення (internal-конструктор, керується агрегатом) |
+| `OrderStatus` | `enum` | Стани Draft → Confirmed / Cancelled |
+
+**Зв'язок:** `Order` містить захищений `List<OrderLine>` (назовні — `IReadOnlyList<OrderLine>`), переходи станів реалізовано через `switch expression`.
+
+---
+
+### Інваріанти
+
+#### Product
+
+| # | Правило | Тип винятку | Метод |
+|---|:---|:---|:---|
+| 1 | `Id` не може бути порожнім | `ArgumentException` | `Create` |
+| 2 | `SKU` не може бути порожнім | `ArgumentException` | `Create` |
+| 3 | `Name` не може бути порожньою | `ArgumentException` | `Create` |
+| 4 | Початковий залишок ≥ 0 | `ArgumentOutOfRangeException` | `Create` |
+| 5 | Кількість приходу > 0 | `ArgumentOutOfRangeException` | `RegisterArrival` |
+| 6 | Кількість видачі > 0 | `ArgumentOutOfRangeException` | `Issue` |
+| 7 | Не видавати більше, ніж є в залишку | `InvalidOperationException` | `Issue` |
+
+#### Order / OrderLine
+
+| # | Правило | Тип винятку | Метод |
+|---|:---|:---|:---|
+| 1 | `Id` замовлення не порожній | `ArgumentException` | `Create` |
+| 2 | `CustomerId` не порожній | `ArgumentException` | `Create` |
+| 3 | Кількість у рядку > 0 | `ArgumentOutOfRangeException` | `AddLine` |
+| 4 | Ціна у рядку ≥ 0 | `ArgumentOutOfRangeException` | `AddLine` |
+| 5 | Рядки не додаються до не-Draft замовлення | `InvalidOperationException` | `AddLine` |
+| 6 | Не підтверджувати порожнє замовлення | `InvalidOperationException` | `Confirm` |
+| 7 | Перехід стану лише з Draft (switch expression) | `InvalidOperationException` | `Confirm`, `Cancel` |
+
+### Самоперевірка (Definition of Done)
+
+- [x] Сутності в `Core/Domain`; records лаб 3 лишились як DTO
+- [x] Стан інкапсульовано: `private int _quantity`, `{ get; }`, `private set`
+- [x] Фабричний метод `Create`; публічного конструктора немає
+- [x] ≥ 3 інваріанти з осмисленими повідомленнями (фактично 7 + 7)
+- [x] Правильний вибір типу: `Argument*` для входу, `InvalidOperation*` для стану
+- [x] `ToDto()` / `FromDto()` в обох сутностях
+- [x] CLI демонструє успіх та відмову; stack trace не виводиться
+- [x] Колекція `Lines` назовні — `IReadOnlyList<OrderLine>` через `AsReadOnly()`
+- [x] `Domain` не залежить від `Console`, `File` або `Cli`
+- [x] Доп. завдання 1: `ProductDomainMapper` — `ImportResult → Domain entities`
+- [x] Доп. завдання 3: `OrderStatus` enum + `switch expression` для переходів
+
+---
 
 ## Команди
-
-Додання бібліотеки та посилання (виконано для цього solution):
-
-```powershell
-dotnet new classlib -n Core -o src/Core -f net10.0
-dotnet sln CrossApp.slnx add src/Core/Core.csproj
-dotnet add src/Cli/Cli.csproj reference src/Core/Core.csproj
-```
 
 Збірка й запуск:
 
 ```powershell
-dotnet sln CrossApp.slnx list
-dotnet build CrossApp.slnx
 dotnet build src/Core/Core.csproj
 dotnet run --project src/Cli --framework net10.0
-dotnet run --project src/Cli --framework net10.0 -- --json
 ```
 
-`Program.cs` не використовує `RuntimeInformation`: збір середовища належить `Core`, а CLI відповідає за вивід. Звичайний режим очікує натискання клавіші перед завершенням.
-
-## Multi-targeting
-
-`Core` і `Cli` збираються для `net8.0` та `net10.0`. У `EnvironmentInfo` директива `#if NET10_0_OR_GREATER` додає до звіту `BuildNote`, тому рядок вказує TFM, для якого скомпільовано бібліотеку.
-
-Перевірено командою `dotnet build CrossApp.slnx`; створено `bin/Debug/net8.0` і `bin/Debug/net10.0`. У системі встановлено SDK `10.0.100` і runtimes `8.0.31`, `9.0.11` та `10.0.12`. Обидві збірки запущено без roll-forward:
+Запуск з CSV-файлом (лаб 1-3):
 
 ```powershell
-dotnet run --no-build --project src/Cli --framework net8.0 -- --json
-dotnet run --no-build --project src/Cli --framework net10.0 -- --json
+dotnet run --project src/Cli --framework net10.0 -- data/sample.csv
+dotnet run --project src/Cli --framework net10.0 -- data/sample.json
+dotnet run --project src/Cli --framework net10.0 -- data/mixed.csv
 ```
 
-Для `net8.0` вивід містить `BuildNote: збірка під net8.0` і `FrameworkDescription: .NET 8.0.31`; для `net10.0` — `BuildNote: збірка під net10.0` і `FrameworkDescription: .NET 10.0.12`.
+---
 
-## Публікація
+## Попередні лабораторні
 
-Публікацію виконано для `win-x64`, `net10.0`. Для кожного режиму задано окремий вихідний каталог, усі вони під `artifacts/publish/` і не потрапляють у Git.
+### Лаб 2 — Core + Cli
+
+`Core` — class library без точки входу. `EnvironmentInfo.Collect()` збирає дані платформи й повертає `EnvironmentReport`. `Cli` — єдина залежність `Cli → Core`.
+
+### Лаб 3 — Імпорт CSV / JSON
+
+`Core/Dto/` містить record-типи `ProductDto`, `ImportResult<T>`, `WarehouseDto`.
+`Core/Import/` містить `ProductCsvImporter`, `ProductJsonImporter`, `MixedCsvImporter`.
+
+### Multi-targeting
+
+`Core` і `Cli` збираються для `net8.0` та `net10.0`.
 
 ```powershell
-dotnet publish src/Cli/Cli.csproj -c Release -f net10.0 -r win-x64 --self-contained true -o artifacts/publish/win-x64-self-contained
-dotnet publish src/Cli/Cli.csproj -c Release -f net10.0 -r win-x64 --self-contained false -o artifacts/publish/win-x64-framework-dependent
+dotnet run --no-build --project src/Cli --framework net8.0
+dotnet run --no-build --project src/Cli --framework net10.0
 ```
 
-Framework-dependent містить застосунок і залежності, але не .NET runtime, тому на цільовій машині потрібен .NET 10. Self-contained також містить runtime; він більший, зате не потребує попередньої інсталяції .NET і прив'язаний до RID.
+### Публікація
 
-Розмір пораховано сумою розмірів файлів через PowerShell (`Measure-Object Length -Sum`); MiB = байти / 1,048,576.
-
-| RID | Режим | Розмір каталогу | Файлів | Потрібен встановлений runtime? |
-| :--- | :--- | ---: | ---: | :--- |
-| win-x64 | self-contained | 77.06 MiB (80,803,422 байти) | 194 | Ні |
-| win-x64 | framework-dependent | 0.22 MiB (226,254 байти) | 7 | Так, .NET 10 |
-
-Обидва виконувані файли запускалися безпосередньо з `artifacts/publish/.../Cli.exe --json`; у звіті вказано відповідний каталог публікації й RID `win-x64`.
-
-## Додаткові параметри
-
-Single-file і trimmed варіанти також зібрано для `net10.0` та запущено з publish-каталогів:
-
-```powershell
-dotnet publish src/Cli/Cli.csproj -c Release -f net10.0 -r win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/publish/win-x64-single-file
-dotnet publish src/Cli/Cli.csproj -c Release -f net10.0 -r win-x64 --self-contained true -p:PublishTrimmed=true -o artifacts/publish/win-x64-trimmed
-```
-
-| Варіант | Розмір | Файлів | Запуск |
-| :--- | ---: | ---: | :--- |
-| Self-contained + single-file | 70.13 MiB (73,541,845 байт) | 3 | Успішний |
-| Self-contained + trimming | 19.76 MiB (20,714,771 байт) | 35 | Успішний |
-
-Trimming може видалити типи й члени, доступ до яких здійснюється через reflection і які статичний аналізатор не бачить. Початковий reflection-based виклик `System.Text.Json` спричиняв `IL2026` і падав у trimmed-застосунку. Серіалізацію переведено на source-generated metadata (`CliJsonContext`); фінальна trimmed-публікація збирається без попереджень і JSON-режим працює. Для іншого коду з reflection trimming усе одно потрібно перевіряти окремо.
-
-## Перевірка
-
-- `dotnet sln CrossApp.slnx list` показує обидва проєкти.
-- `dotnet build CrossApp.slnx` і окремий build `Core` успішні.
-- `Core` не посилається на `Cli`; `Cli.csproj` містить `ProjectReference` на `Core.csproj`.
-- `bin/`, `obj/` і `artifacts/publish/` виключені з Git.
-- Публікації self-contained, framework-dependent, single-file і trimmed запускаються з каталогів `publish` у JSON-режимі.
+| RID | Режим | Розмір | Файлів | Runtime потрібен? |
+|:---|:---|---:|---:|:---|
+| win-x64 | self-contained | 77.06 MiB | 194 | Ні |
+| win-x64 | framework-dependent | 0.22 MiB | 7 | Так, .NET 10 |
+| win-x64 | single-file | 70.13 MiB | 3 | Ні |
+| win-x64 | trimmed | 19.76 MiB | 35 | Ні |

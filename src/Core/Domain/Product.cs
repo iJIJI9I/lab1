@@ -17,6 +17,7 @@ public sealed class Product
 {
     // Приватне поле залишку — змінюється лише через RegisterArrival / Issue.
     private int _quantity;
+    
 
     // Автовластивості лише для читання: { get; } — присвоєння тільки в конструкторі.
     public string Id   { get; }

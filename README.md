@@ -11,12 +11,22 @@ src/
         Core.csproj
         EnvironmentInfo.cs
         EnvironmentReport.cs
+        SampleData.cs           ← зразки 16 товарів (лаб 5)
+        Abstractions/           ← НОВЕ (лаб 5): контракти сховищ
+            ICatalogStore.cs    ← інтерфейс сховища каталогу
+        Storage/                ← НОВЕ (лаб 5): реалізації сховищ
+            InMemoryCatalogStore.cs ← реалізація в оперативній пам'яті
+            FileCatalogStore.cs     ← файлова реалізація (JSON)
+            CachingCatalogStore.cs  ← доп. завд. 1: патерн Декоратор
+            StoreFactory.cs         ← доп. завд. 3: фабрика вибору сховища
+        Services/               ← НОВЕ (лаб 5): бізнес-сервіси
+            CatalogService.cs   ← сервіс з ін'єкцією через конструктор
         Dto/
-            ProductDto.cs       ← record, формат даних (лаб 3)
+            ProductDto.cs       ← record, формат даних (лаб 3, 5)
             ImportResult.cs     ← record, результат імпорту (лаб 3)
             WarehouseDto.cs     ← record, формат складу (лаб 3)
             OrderDto.cs         ← record, формат замовлення (лаб 4)
-        Domain/                 ← НОВЕ (лаб 4): сутності з поведінкою
+        Domain/                 ← сутності з бізнес-інваріантами (лаб 4)
             Product.cs          ← інкапсульований товар на складі
             Order.cs            ← агрегат замовлення + захищена колекція
             OrderLine.cs        ← рядок замовлення (internal-конструктор)
@@ -25,117 +35,92 @@ src/
             ProductCsvImporter.cs
             ProductJsonImporter.cs
             MixedCsvImporter.cs
-            ProductDomainMapper.cs  ← НОВЕ (лаб 4, доп.): ImportResult → Domain
+            ProductDomainMapper.cs
     Cli/
         Cli.csproj
-        Program.cs
+        Program.cs              ← Composition Root (ручний DI)
 data/
     sample.csv
     sample.json
     mixed.csv
+    catalog.json                ← з'являється при запуску з --file
 ```
 
-## Лабораторна 4 — Доменна модель: сутності, інваріанти, інкапсуляція
+---
 
-### Обрані сутності
+## Лабораторна 5 — Сервісний шар: інтерфейси, два сховища, ручний DI
 
-| Сутність | Тип | Роль |
-|:---|:---|:---|
-| `Product` | `sealed class` | Товар на складі з залишком; операції: прихід, видача |
-| `Order` | `sealed class` | Агрегат замовлення з колекцією рядків |
-| `OrderLine` | `sealed class` | Рядок замовлення (internal-конструктор, керується агрегатом) |
-| `OrderStatus` | `enum` | Стани Draft → Confirmed / Cancelled |
+### Архітектура та компоненти
 
-**Зв'язок:** `Order` містить захищений `List<OrderLine>` (назовні — `IReadOnlyList<OrderLine>`), переходи станів реалізовано через `switch expression`.
+* **Інтерфейс сховища:** `ICatalogStore` (`src/Core/Abstractions/ICatalogStore.cs`)
+  * `IReadOnlyList<Product> List()`
+  * `Product? GetById(string id)`
+  * `void Add(Product item)`
+  * `void Update(Product item)`
+  * `bool Remove(string id)`
+  * `IReadOnlyList<Product> Find(Func<Product, bool> predicate)` — *додаткове завдання 2*
+* **Реалізації сховища:**
+  * `InMemoryCatalogStore` (`src/Core/Storage/InMemoryCatalogStore.cs`) — зберігання в пам'яті на основі `Dictionary<string, Product>`.
+  * `FileCatalogStore` (`src/Core/Storage/FileCatalogStore.cs`) — файлове JSON-сховище (`data/catalog.json`) з кешуванням у пам'яті та серіалізацією через `ProductDto` (метод `Flush()`).
+  * `CachingCatalogStore` (`src/Core/Storage/CachingCatalogStore.cs`) — *додаткове завдання 1*: декоратор для прозорого кешування будь-якого `ICatalogStore`.
+* **Сервісний шар:** `CatalogService` (`src/Core/Services/CatalogService.cs`)
+  * Залежить **виключно** від абстракції `ICatalogStore` (Dependency Inversion Principle).
+  * Ін'єкція залежності виконується через первинний конструктор `CatalogService(ICatalogStore store)`.
+  * Реалізує бізнес-операції: `Add`, `Receive`, `Issue`, `All`, `Find`, `Search`.
+* **Фабрика вибору сховища:** `StoreFactory` (`src/Core/Storage/StoreFactory.cs`) — *додаткове завдання 3*: конструювання сховища за аргументами CLI.
+
+### Схема залежностей
+```text
+Cli (Program.cs) ──> CatalogService ──> ICatalogStore (Interface)
+                         │                     ▲
+                    (Manual DI)         ┌──────┴──────┬──────────────┐
+                                        │             │              │
+                              InMemoryCatalogStore FileCatalogStore CachingCatalogStore
+```
+
+### Definition of Done (Самоперевірка)
+- [x] **1. Інтерфейс сховища в Core:** `ICatalogStore` у просторі імен `Core.Abstractions`.
+- [x] **2. Дві робочі реалізації:** `InMemoryCatalogStore` та `FileCatalogStore`.
+- [x] **3. Сервіс залежить лише від інтерфейсу:** `CatalogService(ICatalogStore store)` без згадок файлів чи конкретних класів.
+- [x] **4. Перемикання аргументом CLI:** аргумент `--file` перемикає на `FileCatalogStore`, за замовчуванням — `InMemoryCatalogStore`.
+- [x] **5. Повний сценарій:** додати, змінити (Receive/Issue), показати список, знайти за Id.
+- [x] **6. Зрозумілі повідомлення про помилки:** неіснуючий Id, спроба додати дублікат Id, перевитрата товару.
+- [x] **7. Без сторонніх контейнерів:** `Microsoft.Extensions.DependencyInjection` не підключено (Pure DI).
+- [x] **8. Додаткові завдання:**
+  - Декоратор `CachingCatalogStore` (`--cached`)
+  - Пошук за предикатом `Func<Product, bool>`
+  - Фабрика `StoreFactory.Create(args, ...)`
 
 ---
 
-### Інваріанти
-
-#### Product
-
-| # | Правило | Тип винятку | Метод |
-|---|:---|:---|:---|
-| 1 | `Id` не може бути порожнім | `ArgumentException` | `Create` |
-| 2 | `SKU` не може бути порожнім | `ArgumentException` | `Create` |
-| 3 | `Name` не може бути порожньою | `ArgumentException` | `Create` |
-| 4 | Початковий залишок ≥ 0 | `ArgumentOutOfRangeException` | `Create` |
-| 5 | Кількість приходу > 0 | `ArgumentOutOfRangeException` | `RegisterArrival` |
-| 6 | Кількість видачі > 0 | `ArgumentOutOfRangeException` | `Issue` |
-| 7 | Не видавати більше, ніж є в залишку | `InvalidOperationException` | `Issue` |
-
-#### Order / OrderLine
-
-| # | Правило | Тип винятку | Метод |
-|---|:---|:---|:---|
-| 1 | `Id` замовлення не порожній | `ArgumentException` | `Create` |
-| 2 | `CustomerId` не порожній | `ArgumentException` | `Create` |
-| 3 | Кількість у рядку > 0 | `ArgumentOutOfRangeException` | `AddLine` |
-| 4 | Ціна у рядку ≥ 0 | `ArgumentOutOfRangeException` | `AddLine` |
-| 5 | Рядки не додаються до не-Draft замовлення | `InvalidOperationException` | `AddLine` |
-| 6 | Не підтверджувати порожнє замовлення | `InvalidOperationException` | `Confirm` |
-| 7 | Перехід стану лише з Draft (switch expression) | `InvalidOperationException` | `Confirm`, `Cancel` |
-
-### Самоперевірка (Definition of Done)
-
-- [x] Сутності в `Core/Domain`; records лаб 3 лишились як DTO
-- [x] Стан інкапсульовано: `private int _quantity`, `{ get; }`, `private set`
-- [x] Фабричний метод `Create`; публічного конструктора немає
-- [x] ≥ 3 інваріанти з осмисленими повідомленнями (фактично 7 + 7)
-- [x] Правильний вибір типу: `Argument*` для входу, `InvalidOperation*` для стану
-- [x] `ToDto()` / `FromDto()` в обох сутностях
-- [x] CLI демонструє успіх та відмову; stack trace не виводиться
-- [x] Колекція `Lines` назовні — `IReadOnlyList<OrderLine>` через `AsReadOnly()`
-- [x] `Domain` не залежить від `Console`, `File` або `Cli`
-- [x] Доп. завдання 1: `ProductDomainMapper` — `ImportResult → Domain entities`
-- [x] Доп. завдання 3: `OrderStatus` enum + `switch expression` для переходів
-
----
-
-## Команди
-
-Збірка й запуск:
+## Команди запуску Лабораторної 5
 
 ```powershell
-dotnet build src/Core/Core.csproj
+# 1. Режим у пам'яті (за замовчуванням, дані не зберігаються після виходу):
 dotnet run --project src/Cli --framework net10.0
-```
 
-Запуск з CSV-файлом (лаб 1-3):
+# 2. Файловий режим (дані зберігаються у data/catalog.json і накопичуються):
+dotnet run --project src/Cli --framework net10.0 -- --file
 
-```powershell
-dotnet run --project src/Cli --framework net10.0 -- data/sample.csv
-dotnet run --project src/Cli --framework net10.0 -- data/sample.json
-dotnet run --project src/Cli --framework net10.0 -- data/mixed.csv
+# 3. Режим з декоратором кешування (додаткове завдання 1):
+dotnet run --project src/Cli --framework net10.0 -- --file --cached
+
+# 4. Запуск демонстрації попередньої лабораторної 4:
+dotnet run --project src/Cli --framework net10.0 -- --lab4
 ```
 
 ---
 
-## Попередні лабораторні
+## Попередні лабораторні роботи
 
-### Лаб 2 — Core + Cli
+### Лабораторна 4 — Доменна модель: сутності, інваріанти, інкапсуляція
+* `Product` — товар на складі із захищеним полем кількості, методами `RegisterArrival`, `Issue`, фабричним методом `Create` та мапінгом `ToDto` / `FromDto`.
+* `Order` + `OrderLine` — агрегат замовлення із захищеною колекцією рядків та перевіркою переходів станів `OrderStatus` через `switch expression`.
 
-`Core` — class library без точки входу. `EnvironmentInfo.Collect()` збирає дані платформи й повертає `EnvironmentReport`. `Cli` — єдина залежність `Cli → Core`.
+### Лабораторна 3 — Імпорт CSV / JSON
+* Record-типи DTO: `ProductDto`, `WarehouseDto`, `ImportResult<T>`.
+* Імпортери: `ProductCsvImporter`, `ProductJsonImporter`, `MixedCsvImporter`.
 
-### Лаб 3 — Імпорт CSV / JSON
-
-`Core/Dto/` містить record-типи `ProductDto`, `ImportResult<T>`, `WarehouseDto`.
-`Core/Import/` містить `ProductCsvImporter`, `ProductJsonImporter`, `MixedCsvImporter`.
-
-### Multi-targeting
-
-`Core` і `Cli` збираються для `net8.0` та `net10.0`.
-
-```powershell
-dotnet run --no-build --project src/Cli --framework net8.0
-dotnet run --no-build --project src/Cli --framework net10.0
-```
-
-### Публікація
-
-| RID | Режим | Розмір | Файлів | Runtime потрібен? |
-|:---|:---|---:|---:|:---|
-| win-x64 | self-contained | 77.06 MiB | 194 | Ні |
-| win-x64 | framework-dependent | 0.22 MiB | 7 | Так, .NET 10 |
-| win-x64 | single-file | 70.13 MiB | 3 | Ні |
-| win-x64 | trimmed | 19.76 MiB | 35 | Ні |
+### Лабораторна 2 — Бібліотека Core та консольний клієнт Cli
+* Відокремлення спільного коду бібліотеки `Core` від точки входу `Cli`.
+* Мультитаргетинг: `net8.0` та `net10.0`.

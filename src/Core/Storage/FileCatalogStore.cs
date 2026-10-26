@@ -87,3 +87,4 @@ public sealed class FileCatalogStore(string path) : ICatalogStore
         return _cache.Values.Where(predicate).ToList();
     }
 }
+

@@ -13,3 +13,4 @@ public interface ICatalogStore
     // Додаткове завдання 2: пошук за предикатом
     IReadOnlyList<Product> Find(Func<Product, bool> predicate);
 }
+

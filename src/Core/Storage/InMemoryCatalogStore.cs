@@ -39,3 +39,4 @@ public sealed class InMemoryCatalogStore(IEnumerable<Product>? seed = null) : IC
         return _items.Values.Where(predicate).ToList();
     }
 }
+

@@ -11,116 +11,111 @@ src/
         Core.csproj
         EnvironmentInfo.cs
         EnvironmentReport.cs
-        SampleData.cs           ← зразки 16 товарів (лаб 5)
-        Abstractions/           ← НОВЕ (лаб 5): контракти сховищ
-            ICatalogStore.cs    ← інтерфейс сховища каталогу
-        Storage/                ← НОВЕ (лаб 5): реалізації сховищ
-            InMemoryCatalogStore.cs ← реалізація в оперативній пам'яті
-            FileCatalogStore.cs     ← файлова реалізація (JSON)
-            CachingCatalogStore.cs  ← доп. завд. 1: патерн Декоратор
-            StoreFactory.cs         ← доп. завд. 3: фабрика вибору сховища
-        Services/               ← НОВЕ (лаб 5): бізнес-сервіси
-            CatalogService.cs   ← сервіс з ін'єкцією через конструктор
+        SampleData.cs                   ← зразки 16 товарів (лаб 5)
+        Abstractions/                   ← контракти сховищ (лаб 5)
+            ICatalogStore.cs            ← інтерфейс сховища каталогу
+        Storage/                        ← реалізації сховищ (лаб 5)
+            InMemoryCatalogStore.cs     ← реалізація в оперативній пам'яті
+            FileCatalogStore.cs         ← файлова реалізація (JSON)
+            CachingCatalogStore.cs      ← доп. завд. 1 (лаб 5): патерн Декоратор
+            StoreFactory.cs             ← доп. завд. 3 (лаб 5): фабрика сховищ
+        Services/                       ← бізнес-сервіси (лаб 5, 6)
+            CatalogService.cs           ← подія Changed, OnChanged, FindAll(Func)
+        Events/                         ← НОВЕ (лаб 6): доменні події
+            CatalogChangeKind.cs        ← enum: Added, Received, Issued, Removed
+            CatalogChangedEventArgs.cs  ← EventArgs: Id, Kind, Delta, QuantityAfter, At
+        Notifications/                  ← НОВЕ (лаб 6, доп. 1): контракти сповіщень
+            INotificationSink.cs        ← інтерфейс приймача сповіщень
         Dto/
-            ProductDto.cs       ← record, формат даних (лаб 3, 5)
-            ImportResult.cs     ← record, результат імпорту (лаб 3)
-            WarehouseDto.cs     ← record, формат складу (лаб 3)
-            OrderDto.cs         ← record, формат замовлення (лаб 4)
-        Domain/                 ← сутності з бізнес-інваріантами (лаб 4)
-            Product.cs          ← інкапсульований товар на складі
-            Order.cs            ← агрегат замовлення + захищена колекція
-            OrderLine.cs        ← рядок замовлення (internal-конструктор)
-            OrderStatus.cs      ← enum Draft / Confirmed / Cancelled
+            ProductDto.cs               ← record, формат даних (лаб 3, 5)
+            ImportResult.cs             ← record, результат імпорту (лаб 3)
+            WarehouseDto.cs             ← record, формат складу (лаб 3)
+            OrderDto.cs                 ← record, формат замовлення (лаб 4)
+        Domain/                         ← сутності з бізнес-інваріантами (лаб 4)
+            Product.cs                  ← інкапсульований товар на складі
+            Order.cs                    ← агрегат замовлення + захищена колекція
+            OrderLine.cs                ← рядок замовлення (internal-конструктор)
+            OrderStatus.cs              ← enum Draft / Confirmed / Cancelled
         Import/
-            ProductCsvImporter.cs
+            ProductCsvImporter.cs       ← оновлено (лаб 6, доп. 2): Action<string> callback
             ProductJsonImporter.cs
             MixedCsvImporter.cs
             ProductDomainMapper.cs
     Cli/
         Cli.csproj
-        Program.cs              ← Composition Root (ручний DI)
+        Program.cs                      ← Composition Root, підписка/відписка на події
+        Notifications/                  ← НОВЕ (лаб 6, доп. 1): реалізації Sink
+            ConsoleSink.cs              ← виведення сповіщень у консоль
+            FileSink.cs                 ← запис сповіщень у logs/sink.log
+logs/
+    app.log                             ← створюється автоматично під час запуску
 data/
     sample.csv
     sample.json
     mixed.csv
-    catalog.json                ← з'являється при запуску з --file
+    catalog.json                        ← з'являється при запуску з --file
 ```
 
 ---
 
-## Лабораторна 5 — Сервісний шар: інтерфейси, два сховища, ручний DI
+## Лабораторна 6 — Доменні події, делегати Action/Func, лямбди
 
-### Архітектура та компоненти
+### Мета та архітектура
+Реалізовано механізм сповіщення зовнішнього коду про зміни стану без залежності доменного шару від способу їх оброблення:
+* **Подія в домені:** `CatalogService` оголошує `public event EventHandler<CatalogChangedEventArgs>? Changed;` і викликає її через приватний метод `OnChanged`.
+* **Підняття лише після успішної зміни:** `Changed?.Invoke(...)` викликається суворо **після** успішної валідації інваріантів та оновлення сховища. Якщо операція кидає виняток, подія не генерується.
+* **Підписники в CLI:**
+  1. *Підписник 1 (локальний метод `OnCatalogChanged`):* форматує подію та записує рядок у консоль і у файл `logs/app.log`.
+  2. *Підписник 2 (лямбда із замиканням `(_, _) => changes++`):* рахує загальну кількість подій за допомогою захопленої локальної змінної `changes`.
+* **Відписка (`-=`):** продемонстровано відписку локального методу `service.Changed -= OnCatalogChanged;`. Наступні виклики стають «тихими» (не пишуть у консоль і файл, але лічильник другого підписника продовжує зростати).
+* **Делегат замість події (`Func<Product, bool>`):** метод `FindAll(predicate)` у `CatalogService` приймає лямбда-вираз для фільтрації товарів.
 
-* **Інтерфейс сховища:** `ICatalogStore` (`src/Core/Abstractions/ICatalogStore.cs`)
-  * `IReadOnlyList<Product> List()`
-  * `Product? GetById(string id)`
-  * `void Add(Product item)`
-  * `void Update(Product item)`
-  * `bool Remove(string id)`
-  * `IReadOnlyList<Product> Find(Func<Product, bool> predicate)` — *додаткове завдання 2*
-* **Реалізації сховища:**
-  * `InMemoryCatalogStore` (`src/Core/Storage/InMemoryCatalogStore.cs`) — зберігання в пам'яті на основі `Dictionary<string, Product>`.
-  * `FileCatalogStore` (`src/Core/Storage/FileCatalogStore.cs`) — файлове JSON-сховище (`data/catalog.json`) з кешуванням у пам'яті та серіалізацією через `ProductDto` (метод `Flush()`).
-  * `CachingCatalogStore` (`src/Core/Storage/CachingCatalogStore.cs`) — *додаткове завдання 1*: декоратор для прозорого кешування будь-якого `ICatalogStore`.
-* **Сервісний шар:** `CatalogService` (`src/Core/Services/CatalogService.cs`)
-  * Залежить **виключно** від абстракції `ICatalogStore` (Dependency Inversion Principle).
-  * Ін'єкція залежності виконується через первинний конструктор `CatalogService(ICatalogStore store)`.
-  * Реалізує бізнес-операції: `Add`, `Receive`, `Issue`, `All`, `Find`, `Search`.
-* **Фабрика вибору сховища:** `StoreFactory` (`src/Core/Storage/StoreFactory.cs`) — *додаткове завдання 3*: конструювання сховища за аргументами CLI.
-
-### Схема залежностей
-```text
-Cli (Program.cs) ──> CatalogService ──> ICatalogStore (Interface)
-                         │                     ▲
-                    (Manual DI)         ┌──────┴──────┬──────────────┐
-                                        │             │              │
-                              InMemoryCatalogStore FileCatalogStore CachingCatalogStore
-```
+### Додаткові завдання
+1. **Інтерфейс `INotificationSink`:** контракт сповіщень у `Core.Notifications` та реалізації `ConsoleSink`, `FileSink` у `Cli.Notifications`, що передаються через конструктор сервісу (патерн Sink як альтернатива подіям).
+2. **`Action<string>` у методі імпорту:** у `ProductCsvImporter.Load(path, onSkipped)` додано делегат `Action<string>?`, який сповіщає про кожен пропущений або некоректний рядок CSV.
 
 ### Definition of Done (Самоперевірка)
-- [x] **1. Інтерфейс сховища в Core:** `ICatalogStore` у просторі імен `Core.Abstractions`.
-- [x] **2. Дві робочі реалізації:** `InMemoryCatalogStore` та `FileCatalogStore`.
-- [x] **3. Сервіс залежить лише від інтерфейсу:** `CatalogService(ICatalogStore store)` без згадок файлів чи конкретних класів.
-- [x] **4. Перемикання аргументом CLI:** аргумент `--file` перемикає на `FileCatalogStore`, за замовчуванням — `InMemoryCatalogStore`.
-- [x] **5. Повний сценарій:** додати, змінити (Receive/Issue), показати список, знайти за Id.
-- [x] **6. Зрозумілі повідомлення про помилки:** неіснуючий Id, спроба додати дублікат Id, перевитрата товару.
-- [x] **7. Без сторонніх контейнерів:** `Microsoft.Extensions.DependencyInjection` не підключено (Pure DI).
-- [x] **8. Додаткові завдання:**
-  - Декоратор `CachingCatalogStore` (`--cached`)
-  - Пошук за предикатом `Func<Product, bool>`
-  - Фабрика `StoreFactory.Create(args, ...)`
+- [x] **1. Тип даних події в Core:** `CatalogChangedEventArgs : EventArgs` (`Id`, `Kind`, `Delta`, `QuantityAfter`, `At`).
+- [x] **2. Подія `event EventHandler<...>` у сервісі:** підняття `OnChanged` суворо після успішної зміни стану.
+- [x] **3. Core не пише в консоль і файл:** у просторі імен `Core` відсутні звернення до `Console` та шляхів файлових логів.
+- [x] **4. Два підписники в CLI:** локальний метод та лямбда із замиканням над `changes`.
+- [x] **5. Демонстрація `-=`:** показано відписку та припинення виводу в консоль/файл за збереження роботи другого підписника.
+- [x] **6. Використано `Func` та `Action` у сигнатурах:** `FindAll(Func<Product, bool>)` та `Load(..., Action<string>?)`.
+- [x] **7. Файл `logs/app.log`:** формується через `Path.Combine`, каталог створюється кодом (`Directory.CreateDirectory`).
+- [x] **8. README оновлено, коміт `lab06`:** документація заповнена, проект протестовано.
 
 ---
 
-## Команди запуску Лабораторної 5
+## Команди запуску
 
 ```powershell
-# 1. Режим у пам'яті (за замовчуванням, дані не зберігаються після виходу):
-dotnet run --project src/Cli --framework net10.0
+# 1. Запуск Лабораторної 6 (демонстрація подій, підписки/відписки, логів, Func та Action):
+dotnet run --project src/Cli
 
-# 2. Файловий режим (дані зберігаються у data/catalog.json і накопичуються):
-dotnet run --project src/Cli --framework net10.0 -- --file
+# 2. Запуск у файловому режимі сховища:
+dotnet run --project src/Cli -- --file
 
-# 3. Режим з декоратором кешування (додаткове завдання 1):
-dotnet run --project src/Cli --framework net10.0 -- --file --cached
+# 3. Перевірка лог-файлу подій:
+Get-Content logs/app.log
 
-# 4. Запуск демонстрації попередньої лабораторної 4:
-dotnet run --project src/Cli --framework net10.0 -- --lab4
+# 4. Запуск попередніх лабораторних:
+dotnet run --project src/Cli -- --lab5
+dotnet run --project src/Cli -- --lab4
 ```
 
 ---
 
 ## Попередні лабораторні роботи
 
+### Лабораторна 5 — Сервісний шар: інтерфейси, два сховища, ручний DI
+* `ICatalogStore` — інтерфейс абстракції сховища.
+* `InMemoryCatalogStore`, `FileCatalogStore`, `CachingCatalogStore` (декоратор), `StoreFactory`.
+* `CatalogService` — бізнес-сервіс із залежністю через первинний конструктор (Pure DI).
+
 ### Лабораторна 4 — Доменна модель: сутності, інваріанти, інкапсуляція
-* `Product` — товар на складі із захищеним полем кількості, методами `RegisterArrival`, `Issue`, фабричним методом `Create` та мапінгом `ToDto` / `FromDto`.
-* `Order` + `OrderLine` — агрегат замовлення із захищеною колекцією рядків та перевіркою переходів станів `OrderStatus` через `switch expression`.
+* `Product` — сутність товару з методами `RegisterArrival`, `Issue`, фабрикою `Create` та мапінгом DTO.
+* `Order` + `OrderLine` — агрегат замовлення з колекцією рядків та станами `OrderStatus`.
 
-### Лабораторна 3 — Імпорт CSV / JSON
-* Record-типи DTO: `ProductDto`, `WarehouseDto`, `ImportResult<T>`.
-* Імпортери: `ProductCsvImporter`, `ProductJsonImporter`, `MixedCsvImporter`.
-
-### Лабораторна 2 — Бібліотека Core та консольний клієнт Cli
-* Відокремлення спільного коду бібліотеки `Core` від точки входу `Cli`.
-* Мультитаргетинг: `net8.0` та `net10.0`.
+### Лабораторні 2–3 — Core/Cli архітектура та імпорт CSV/JSON
+* Бібліотека `Core` та консольна точка входу `Cli`.
+* Record-типи DTO та парсери `ProductCsvImporter`, `ProductJsonImporter`, `MixedCsvImporter`.

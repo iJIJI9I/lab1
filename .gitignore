@@ -433,3 +433,6 @@ FodyWeavers.xsd
 
 # Generated catalog file for Lab 5
 data/catalog.json
+
+# Generated log files for Lab 6
+logs/

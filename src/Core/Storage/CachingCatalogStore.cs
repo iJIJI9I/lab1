@@ -60,3 +60,4 @@ public sealed class CachingCatalogStore(ICatalogStore inner) : ICatalogStore
         return _memoryCache.Values.Where(predicate).ToList();
     }
 }
+

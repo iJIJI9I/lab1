@@ -24,3 +24,4 @@ public static class SampleData
         Product.Create("P-016", "SKU-016", "Кабель ВВГнг 3x2.5", "м", 500)
     ];
 }
+

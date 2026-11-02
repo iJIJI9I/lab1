@@ -11,7 +11,7 @@ src/
         Core.csproj
         EnvironmentInfo.cs
         EnvironmentReport.cs
-        SampleData.cs                   ← зразки 16 товарів (лаб 5)
+        SampleData.cs                   ← зразки 17 товарів і 4 одиниці виміру (лаб 7)
         Abstractions/                   ← контракти сховищ (лаб 5)
             ICatalogStore.cs            ← інтерфейс сховища каталогу
         Storage/                        ← реалізації сховищ (лаб 5)
@@ -41,9 +41,14 @@ src/
             ProductJsonImporter.cs
             MixedCsvImporter.cs
             ProductDomainMapper.cs
+        Reports/                        ← звіти LINQ to Objects (лаб 7)
+            StockLine.cs                ← DTO рядка звіту
+            GroupSummary.cs             ← DTO зведення групи
+            ReportService.cs            ← фільтри, топ-N, групи, агрегати, Join
+            EnumerableReportExtensions.cs ← власний TopBy<T>
     Cli/
         Cli.csproj
-        Program.cs                      ← Composition Root, підписка/відписка на події
+        Program.cs                      ← Composition Root і вивід звітів
         Notifications/                  ← НОВЕ (лаб 6, доп. 1): реалізації Sink
             ConsoleSink.cs              ← виведення сповіщень у консоль
             FileSink.cs                 ← запис сповіщень у logs/sink.log
@@ -86,19 +91,127 @@ data/
 
 ---
 
+## Лабораторна 7 — Звіти через LINQ to Objects
+
+`Core.Reports.ReportService` приймає `IEnumerable<Product>` і повертає DTO, не доменні сутності. У CLI залишаються вибір команди та форматований вивід; LINQ-запити й обробка порожніх джерел зосереджені в Core. `SampleData` містить 17 товарів, чотири одиниці виміру та три позиції з залишком менше 10.
+
+### Звіти
+
+| Метод | Питання | Оператори |
+|---|---|---|
+| `LowStock` | Які товари потребують поповнення? | `Where`, `OrderBy`, `ThenBy`, `Select` |
+| `TopByQuantity` | Які N товарів мають найбільший залишок? | `TopBy`, `OrderByDescending`, `ThenBy`, `Take`, `Select` |
+| `TopByUnit` | Які N найбільших позицій у вибраній одиниці? | `Where`, `TopBy`, `Select` |
+| `ByUnit` | Як розподілено товари та залишки за одиницями? | `GroupBy`, `Select`, `Count`, `Sum`, `OrderByDescending` |
+| `Totals` | Які загальна кількість, сума, середнє та максимум? | `ToList`, `Count`, `Sum`, `Average`, `Max` |
+| `JoinMovements` | Які рухи відповідають товарам за ID? | `Join`, `OrderBy`, `Select` |
+
+`TopBy<T>` — власний метод-розширення з основним ключем, двома ключами розв'язання нічиєї та `Take`; він використовується в `TopByQuantity` і `TopByUnit`. Метод `ByUnitUsingQuerySyntax` повторює групування синтаксисом `from/group/into/orderby/select`: він компактно читається, коли головна операція — групування, тоді як ланцюжок методів у `ByUnit` явно задає comparer для детермінованого сортування.
+
+### Відкладене виконання та вимірювання
+
+У `DemonstrateDeferredExecution` створюється запит `Where`, але він виконується лише під час `Count()`. Перше перебирання знаходить **3** дефіцитні позиції; після додавання товару до джерела повторний `Count()` знаходить **4**, бо запит читає актуальну колекцію. `ToList()` фіксує ці чотири результати, тому очищення джерела не змінює знімок. `CompareMaterialization` запускає однакові фільтр та агрегати для 100 000 записів без проміжного списку і з `ToList()` після фільтра; результати перевіряються на рівність, а час залежить від середовища.
+
+### Запуск і приклади результатів
+
+```powershell
+dotnet run --project src/Cli -- --lab7
+dotnet run --project src/Cli -- report-top
+dotnet run --project src/Cli -- report-low
+dotnet run --project src/Cli -- report-unit
+dotnet run --project src/Cli -- report-groups
+dotnet run --project src/Cli -- report-groups-query
+dotnet run --project src/Cli -- report-sum
+dotnet run --project src/Cli -- report-join
+dotnet run --project src/Cli -- report-deferred
+dotnet run --project src/Cli -- report-empty
+dotnet run --project src/Cli -- report-benchmark
+```
+
+Приклад виводу всіх підкоманд (час benchmark змінюється між запусками):
+
+```text
+=== report-top ===
+SKU        Назва                         Залишок Од.
+SKU-003    Цегла червона                    4200 шт
+SKU-016    Кабель ВВГнг 3x2.5                500 м
+SKU-015    Саморізи по металу                200 шт
+SKU-006    Профіль CD-60 3м                  150 шт
+SKU-001    Цемент М400 25кг                  120 шт
+=== report-low ===
+SKU-004    Щебінь фракція 20-40                5 т
+SKU-002    Пісок будівельний                   8 т
+SKU-009    Фарба акрилова 14кг                 9 шт
+=== report-unit ===
+SKU-003    Цегла червона                    4200 шт
+SKU-015    Саморізи по металу                200 шт
+SKU-006    Профіль CD-60 3м                  150 шт
+=== report-groups ===
+Од.     Позицій    Залишок
+шт           12       5104
+м             2        570
+м2            1        110
+т             2         13
+=== report-groups-query ===
+Од.     Позицій    Залишок
+шт           12       5104
+м             2        570
+м2            1        110
+т             2         13
+=== report-sum ===
+позицій 17, всього 5797, середнє 341,00, макс 4200
+=== report-join ===
+SKU-001    Цемент М400 25кг                 -8 шт
+SKU-009    Фарба акрилова 14кг              12 шт
+SKU-017    Кабель UTP cat6                 -25 м
+=== report-deferred ===
+Дефіцитних до зміни джерела: 3
+Дефіцитних після додавання: 4
+Елементів у матеріалізованому знімку: 4
+=== report-empty ===
+Дефіцитних позицій: 0
+позицій 0, всього 0, середнє 0,00, макс 0
+=== report-benchmark ===
+Записів: 100 000
+Результат: 50 000 позицій, залишок 2 475 000
+Без ToList посередині: 2,45 мс
+З ToList посередині:   2,11 мс
+```
+
+`report-groups-query` повертає ті самі зведення, що й `report-groups`. `report-top` двічі поспіль повертає однаковий порядок завдяки сортуванню за SKU та ID після залишку. `report-empty` перевіряє порожні результати фільтра й агрегатів; у проєкті використовується лише LINQ to Objects — без PLINQ та LINQ to SQL.
+
+### Definition of Done
+
+- [x] У Core є запити `Where`, проєкція в DTO, `GroupBy`, агрегати та топ-N.
+- [x] Звіти приймають `IEnumerable<T>` і повертають `IReadOnlyList<DTO>` (агрегат повертає іменований кортеж).
+- [x] Топ-N має вторинні ключі сортування; порожнє джерело обробляється без винятку.
+- [x] CLI має щонайменше чотири підкоманди, читабельне вирівнювання та окреме демо відкладеного виконання.
+- [x] Відкладене виконання пояснено з числами з демонстрації.
+- [x] Використовується лише LINQ to Objects.
+- [x] `SampleData` містить 17 товарів і чотири одиниці виміру; `report-low` має результати; створено коміт `lab07`.
+- [x] Додаткові завдання: `Join`, власний `TopBy<T>` у двох звітах, query-синтаксис і benchmark на 100 000 записів.
+
+---
+
 ## Команди запуску
 
 ```powershell
-# 1. Запуск Лабораторної 6 (демонстрація подій, підписки/відписки, логів, Func та Action):
+# Лабораторна 7: звіти LINQ (за замовчуванням із --lab7 запускається report-top)
+dotnet run --project src/Cli -- report-top
+dotnet run --project src/Cli -- report-low
+dotnet run --project src/Cli -- report-groups
+dotnet run --project src/Cli -- report-sum
+
+# Лабораторна 6 (демонстрація подій, підписки/відписки, логів, Func та Action):
 dotnet run --project src/Cli
 
-# 2. Запуск у файловому режимі сховища:
+# Запуск у файловому режимі сховища:
 dotnet run --project src/Cli -- --file
 
-# 3. Перевірка лог-файлу подій:
+# Перевірка лог-файлу подій:
 Get-Content logs/app.log
 
-# 4. Запуск попередніх лабораторних:
+# Запуск попередніх лабораторних:
 dotnet run --project src/Cli -- --lab5
 dotnet run --project src/Cli -- --lab4
 ```

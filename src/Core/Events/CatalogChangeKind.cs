@@ -7,3 +7,4 @@ public enum CatalogChangeKind
     Issued,
     Removed
 }
+

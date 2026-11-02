@@ -1,3 +1,4 @@
+using System.Globalization;
 using Cli.Notifications;
 using Core;
 using Core.Abstractions;
@@ -6,6 +7,7 @@ using Core.Dto;
 using Core.Events;
 using Core.Import;
 using Core.Notifications;
+using Core.Reports;
 using Core.Services;
 using Core.Storage;
 
@@ -25,8 +27,128 @@ if (args.Contains("--lab5", StringComparer.OrdinalIgnoreCase))
     return 0;
 }
 
+string? reportCommand = args.FirstOrDefault(argument =>
+    !argument.StartsWith("--", StringComparison.Ordinal));
+if (args.Contains("--lab7", StringComparer.OrdinalIgnoreCase) ||
+    reportCommand is "report-top" or "report-low" or "report-unit" or "report-groups" or
+        "report-groups-query" or "report-sum" or "report-join" or "report-deferred" or
+        "report-empty" or "report-benchmark")
+{
+    RunLab7Report(args, reportCommand ?? "report-top");
+    return 0;
+}
+
 RunLab6Demo(args);
 return 0;
+
+static void RunLab7Report(string[] args, string command)
+{
+    if (command == "report-deferred")
+    {
+        var deferred = ReportService.DemonstrateDeferredExecution(
+            SampleData.Products(),
+            Product.Create("P-TEMP", "SKU-999", "Тестова скоба", "шт", 3),
+            threshold: 10);
+        Console.WriteLine($"Дефіцитних до зміни джерела: {deferred.BeforeAddition}");
+        Console.WriteLine($"Дефіцитних після додавання: {deferred.AfterAddition}");
+        Console.WriteLine($"Елементів у матеріалізованому знімку: {deferred.SnapshotCount}");
+        return;
+    }
+
+    if (command == "report-benchmark")
+    {
+        var benchmarkProducts = Enumerable.Range(1, 100_000)
+            .Select(index => Product.Create(
+                $"B-{index:D6}",
+                $"BENCH-{index:D6}",
+                "Тестовий товар",
+                "шт",
+                index % 200))
+            .ToList();
+        var benchmark = ReportService.CompareMaterialization(benchmarkProducts, threshold: 100);
+
+        Console.WriteLine($"Записів: {benchmarkProducts.Count:N0}");
+        Console.WriteLine($"Результат: {benchmark.ResultCount:N0} позицій, залишок {benchmark.TotalQuantity:N0}");
+        Console.WriteLine($"Без ToList посередині: {benchmark.WithoutMaterializationMilliseconds:F2} мс");
+        Console.WriteLine($"З ToList посередині:   {benchmark.WithMaterializationMilliseconds:F2} мс");
+        return;
+    }
+
+    IReadOnlyList<Product> items;
+    if (command == "report-empty")
+    {
+        items = [];
+    }
+    else
+    {
+        string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "catalog.json");
+        ICatalogStore store = StoreFactory.Create(args, dataPath, SampleData.Products());
+        items = store.List();
+    }
+
+    switch (command)
+    {
+        case "report-top":
+            PrintStockLines(ReportService.TopByQuantity(items, 5));
+            break;
+        case "report-low":
+            PrintStockLines(ReportService.LowStock(items, 10));
+            break;
+        case "report-unit":
+            PrintStockLines(ReportService.TopByUnit(items, "шт", 3));
+            break;
+        case "report-groups":
+            PrintGroupSummaries(ReportService.ByUnit(items));
+            break;
+        case "report-groups-query":
+            PrintGroupSummaries(ReportService.ByUnitUsingQuerySyntax(items));
+            break;
+        case "report-sum":
+            PrintTotals(ReportService.Totals(items));
+            break;
+        case "report-join":
+            var movements = new[]
+            {
+                new StockMovement("P-001", -8),
+                new StockMovement("P-009", 12),
+                new StockMovement("P-017", -25),
+                new StockMovement("MISSING", 4)
+            };
+            foreach (var movement in ReportService.JoinMovements(items, movements))
+                Console.WriteLine($"  {movement.Sku,-10} {movement.Name,-28} {movement.Delta,6} {movement.Unit}");
+            break;
+        case "report-empty":
+            Console.WriteLine($"Дефіцитних позицій: {ReportService.LowStock(items, 10).Count}");
+            PrintTotals(ReportService.Totals(items));
+            break;
+        default:
+            Console.WriteLine(
+                "report-top | report-low | report-unit | report-groups | report-groups-query | " +
+                "report-sum | report-join | report-deferred | report-empty | report-benchmark");
+            break;
+    }
+}
+
+static void PrintStockLines(IReadOnlyList<StockLine> lines)
+{
+    Console.WriteLine($"  {"SKU",-10} {"Назва",-28} {"Залишок",8} Од.");
+    foreach (var line in lines)
+        Console.WriteLine($"  {line.Sku,-10} {line.Name,-28} {line.Quantity,8} {line.Unit}");
+}
+
+static void PrintGroupSummaries(IReadOnlyList<GroupSummary> groups)
+{
+    Console.WriteLine($"  {"Од.",-6} {"Позицій",8} {"Залишок",10}");
+    foreach (var group in groups)
+        Console.WriteLine($"  {group.Key,-6} {group.Count,8} {group.TotalQuantity,10}");
+}
+
+static void PrintTotals((int Items, int Total, double Average, int Max) totals)
+{
+    string average = totals.Average.ToString("F2", CultureInfo.GetCultureInfo("uk-UA"));
+    Console.WriteLine(
+        $"  позицій {totals.Items}, всього {totals.Total}, середнє {average}, макс {totals.Max}");
+}
 
 static void RunLab6Demo(string[] args)
 {

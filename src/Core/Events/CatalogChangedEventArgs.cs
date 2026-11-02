@@ -9,3 +9,4 @@ public sealed class CatalogChangedEventArgs(
     public int QuantityAfter { get; } = quantityAfter;
     public DateTimeOffset At { get; } = DateTimeOffset.Now;
 }
+

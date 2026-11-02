@@ -9,3 +9,4 @@ public interface INotificationSink
 {
     void Notify(CatalogChangedEventArgs eventArgs);
 }
+

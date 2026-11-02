@@ -21,3 +21,4 @@ public sealed class FileSink : INotificationSink
         File.AppendAllText(_path, line + Environment.NewLine);
     }
 }
+

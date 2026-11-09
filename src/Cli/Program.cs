@@ -12,7 +12,7 @@ using Core.Services;
 using Core.Storage;
 
 // ════════════════════════════════════════════════════════════════════════════════
-// ЛАБОРАТОРНА РОБОТА 6: Доменні події, делегати Action/Func, лямбди
+// ЛАБОРАТОРНА РОБОТА 8: async/await, скасування, доменні винятки, unit-тести
 // ════════════════════════════════════════════════════════════════════════════════
 
 if (args.Contains("--lab4", StringComparer.OrdinalIgnoreCase))
@@ -27,6 +27,12 @@ if (args.Contains("--lab5", StringComparer.OrdinalIgnoreCase))
     return 0;
 }
 
+if (args.Contains("--lab6", StringComparer.OrdinalIgnoreCase))
+{
+    RunLab6Demo(args);
+    return 0;
+}
+
 string? reportCommand = args.FirstOrDefault(argument =>
     !argument.StartsWith("--", StringComparison.Ordinal));
 if (args.Contains("--lab7", StringComparer.OrdinalIgnoreCase) ||
@@ -38,9 +44,146 @@ if (args.Contains("--lab7", StringComparer.OrdinalIgnoreCase) ||
     return 0;
 }
 
-RunLab6Demo(args);
+await RunLab8DemoAsync(args);
 return 0;
 
+static async Task RunLab8DemoAsync(string[] args)
+{
+    Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+    Console.WriteLine("║   ЛАБОРАТОРНА РОБОТА 8: async/await, скасування, тести       ║");
+    Console.WriteLine("╚══════════════════════════════════════════════════════════════╝\n");
+
+    bool useFile = args.Contains("--file", StringComparer.OrdinalIgnoreCase);
+    string dataPath = Path.Combine("data", "catalog.json");
+
+    ICatalogStore store = useFile
+        ? new FileCatalogStore(dataPath)
+        : new InMemoryCatalogStore();
+
+    var service = new CatalogService(store);
+    var importer = new JsonCatalogImporter();
+
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        cts.Cancel();
+        Console.WriteLine("\n[Сигнал Ctrl+C перехоплено, надсилаємо запит на скасування...]");
+    };
+
+    // Демонстрація таймауту або миттєвого скасування за прапорцем
+    if (args.Contains("--cancel", StringComparer.OrdinalIgnoreCase))
+    {
+        cts.Cancel();
+    }
+    else if (args.Contains("--timeout", StringComparer.OrdinalIgnoreCase))
+    {
+        cts.CancelAfter(TimeSpan.FromMilliseconds(5));
+    }
+
+    // ── Крок 5: Основний асинхронний імпорт із обробкою винятків ───────────────
+    Console.WriteLine($">>> 1. Асинхронний імпорт файлу: {dataPath}");
+    var progress = new Progress<int>(percent =>
+    {
+        Console.Write($"\r[Прогрес імпорту: {percent,3}%] ");
+    });
+
+    try
+    {
+        var added = await service.ImportAsync(importer, dataPath, progress, cts.Token);
+        Console.WriteLine();
+        Console.WriteLine($"Імпортовано записів: {added}");
+    }
+    catch (OperationCanceledException)
+    {
+        Console.WriteLine("\nІмпорт скасовано.");
+    }
+    catch (DomainException ex)
+    {
+        Console.WriteLine($"\nДані відхилено: {ex.Message}");
+    }
+    catch (FileNotFoundException)
+    {
+        Console.WriteLine($"\nФайл не знайдено: {dataPath}");
+    }
+
+    // Якщо це цільовий запуск з прапорцем (наприклад лише для --file або --cancel), виходимо
+    if (useFile || args.Contains("--cancel", StringComparer.OrdinalIgnoreCase) || args.Contains("--timeout", StringComparer.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    // ── Демонстрація сценаріїв для захисту ─────────────────────────────────────
+    Console.WriteLine("\n>>> 2. Демонстрація кооперативного скасування (CancelAfter / таймаут):");
+    using (var timeoutCts = new CancellationTokenSource())
+    {
+        timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(1));
+        await Task.Delay(10); // гарантуємо спрацювання таймауту
+
+        try
+        {
+            await service.ImportAsync(importer, dataPath, timeoutCts.Token);
+            Console.WriteLine("Імпортовано успішно (неочікувано)");
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("Імпорт скасовано. (успішно перехоплено OperationCanceledException)");
+        }
+    }
+
+    Console.WriteLine("\n>>> 3. Демонстрація обробки зіпсованого файлу (DomainException):");
+    var corruptedTempPath = Path.Combine(Path.GetTempPath(), $"corrupted_{Guid.NewGuid():N}.json");
+    try
+    {
+        await File.WriteAllTextAsync(corruptedTempPath, """
+        [
+          { "Id": "ERR-1", "Sku": "SKU-BAD", "Name": "Зіпсований товар", "Unit": "шт", "Quantity": -50 }
+        ]
+        """);
+
+        await service.ImportAsync(importer, corruptedTempPath);
+    }
+    catch (DomainException ex)
+    {
+        Console.WriteLine($"Дані відхилено: {ex.Message}");
+    }
+    finally
+    {
+        if (File.Exists(corruptedTempPath))
+            File.Delete(corruptedTempPath);
+    }
+
+    Console.WriteLine("\n>>> 4. Демонстрація обробки відсутнього файлу (FileNotFoundException):");
+    try
+    {
+        await service.ImportAsync(importer, "non_existent_file.json");
+    }
+    catch (FileNotFoundException ex)
+    {
+        Console.WriteLine($"Файл не знайдено: {ex.FileName}");
+    }
+
+    Console.WriteLine("\n>>> 5. Додаткове завдання 1: Потоковий імпорт (IAsyncEnumerable):");
+    var streamStore = new InMemoryCatalogStore();
+    var streamService = new CatalogService(streamStore);
+    var streamAdded = await streamService.ImportStreamAsync(importer, dataPath);
+    Console.WriteLine($"Потоково завантажено у сховище: {streamAdded} записів.");
+
+    Console.WriteLine("\n>>> 6. Додаткове завдання 2: Зв'язані токени (User + Timeout):");
+    using (var userCts = new CancellationTokenSource())
+    using (var timerCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(10)))
+    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(userCts.Token, timerCts.Token))
+    {
+        await Task.Delay(20);
+        Console.WriteLine($"Користувач скасував: {userCts.IsCancellationRequested}");
+        Console.WriteLine($"Таймаут скасував:    {timerCts.IsCancellationRequested}");
+        Console.WriteLine($"Зв'язаний токен:     {linkedCts.IsCancellationRequested} (спрацював саме таймаут)");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Лабораторна 7 (збережено для сумісності з прапорцем --lab7)
+// ════════════════════════════════════════════════════════════════════════════════
 static void RunLab7Report(string[] args, string command)
 {
     if (command == "report-deferred")
@@ -150,115 +293,26 @@ static void PrintTotals((int Items, int Total, double Average, int Max) totals)
         $"  позицій {totals.Items}, всього {totals.Total}, середнє {average}, макс {totals.Max}");
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// Лабораторна 6 (збережено для сумісності з прапорцем --lab6)
+// ════════════════════════════════════════════════════════════════════════════════
 static void RunLab6Demo(string[] args)
 {
-    Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-    Console.WriteLine("║   ЛАБОРАТОРНА РОБОТА 6: Доменні події, Action/Func, лямбди   ║");
-    Console.WriteLine("╚══════════════════════════════════════════════════════════════╝\n");
-
-    // Сховище (ручний DI з лабораторної 5)
+    Console.WriteLine("=== Демонстрація Лабораторної 6 ===");
     string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "catalog.json");
     ICatalogStore store = StoreFactory.Create(args, dataPath, SampleData.Products());
     var service = new CatalogService(store);
 
-    // ── Крок 3. Підписка локальним методом (виведення в консоль і у файл) ───────
-    var logPath = Path.Combine("logs", "app.log");
-    Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-
-    // Очищаємо попередній лог перед новим сеансом для чистоти демонстрації
-    File.WriteAllText(logPath, $"=== Сеанс {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==={Environment.NewLine}");
-
-    void OnCatalogChanged(object? sender, CatalogChangedEventArgs e)
-    {
-        var line = $"{e.At:HH:mm:ss} {e.Kind,-8} {e.Id} {e.Delta,4:+0;-0} → залишок {e.QuantityAfter}";
-        Console.WriteLine($"  [Log] {line}");
-        File.AppendAllText(logPath, line + Environment.NewLine);
-    }
-
-    service.Changed += OnCatalogChanged;
-
-    // ── Крок 4. Другий підписник — лямбда із замиканням над лічильником ──────────
     int changes = 0;
-    service.Changed += (_, _) => changes++;
+    service.Changed += (_, e) =>
+    {
+        changes++;
+        Console.WriteLine($"  [Подія] {e.Kind,-8} {e.Id} {e.Delta,4:+0;-0} -> залишок {e.QuantityAfter}");
+    };
 
-    Console.WriteLine(">>> 1. Додавання та зміна товару з двома підписниками:");
     var created = service.Add("SKU-101", "Кабель UTP cat6", "м", 50);
     service.Receive(created.Id, 25);
-    Console.WriteLine($"Подій отримано: {changes}\n");
-
-    // ── Крок 5. Відписка -= і спостережуваний ефект ──────────────────────────────
-    Console.WriteLine(">>> 2. Відписка локального методу (-= OnCatalogChanged):");
-    service.Changed -= OnCatalogChanged;
-
-    // «Тиха» операція: запис у консоль і файл відсутній, але лічильник збільшується
-    service.Receive(created.Id, 5);
-    Console.WriteLine($"Подій отримано: {changes}  (збільшився лише лічильник лямбди)\n");
-
-    // ── Крок 6. Сценарій відмови (порушення інваріанту: подія НЕ виникає) ───────
-    Console.WriteLine(">>> 3. Сценарії відмови (перевірка, що подія НЕ піднімається):");
-
-    int changesBeforeError = changes;
-    TryDo("видача товару понад залишок (інваріант)", () =>
-        service.Issue(created.Id, 9999));
-
-    TryDo("прихід з від'ємною кількістю (некоректний аргумент)", () =>
-        service.Receive(created.Id, -20));
-
-    TryDo("операція з неіснуючим id", () =>
-        service.Receive("UNKNOWN-ID", 10));
-
-    Console.WriteLine($"Лічильник подій після спроб помилок: {changes} (було {changesBeforeError} — подій не згенеровано)\n");
-
-    // ── Крок 7. Делегат замість події там, де потрібне значення (Func) ───────────
-    Console.WriteLine(">>> 4. Використання делегата Func<Product, bool> у FindAll:");
-    var lowStock = service.FindAll(p => p.Quantity < 30);
-    Console.WriteLine($"Знайдено товарів із залишком < 30 (всього: {lowStock.Count}):");
-    foreach (var p in lowStock.Take(5))
-        Console.WriteLine($"  • {p.Id} [{p.Sku}] {p.Name,-28} — {p.Quantity} {p.Unit}");
-    Console.WriteLine();
-
-    // ── Додаткове завдання 1. INotificationSink (ConsoleSink + FileSink) ─────────
-    Console.WriteLine(">>> 5. Додаткове завдання 1: Альтернатива подіям через INotificationSink:");
-    var sinkLogPath = Path.Combine(AppContext.BaseDirectory, "logs", "sink.log");
-    var sinks = new INotificationSink[]
-    {
-        new ConsoleSink(),
-        new FileSink(sinkLogPath)
-    };
-    var serviceWithSinks = new CatalogService(store, sinks);
-    var sinkProduct = serviceWithSinks.Add("SKU-202", "Труба ПВХ 20мм", "м", 100);
-    serviceWithSinks.Receive(sinkProduct.Id, 30);
-    Console.WriteLine();
-
-    // ── Додаткове завдання 2. Action<string> як callback під час імпорту ─────────
-    Console.WriteLine(">>> 6. Додаткове завдання 2: Action<string> callback пропущені рядки в CSV:");
-    string csvPath = Path.Combine("data", "sample.csv");
-    if (File.Exists(csvPath))
-    {
-        int skippedCount = 0;
-        ProductCsvImporter.Load(csvPath, onSkipped: reason =>
-        {
-            skippedCount++;
-            Console.WriteLine($"  [Action Callback] Пропущено: {reason}");
-        });
-        Console.WriteLine($"Всього пропущено рядків через callback Action<string>: {skippedCount}\n");
-    }
-
-    Console.WriteLine($"Лог-файл успішно оновлено: {Path.GetFullPath(logPath)}");
-}
-
-static void TryDo(string title, Action action)
-{
-    try
-    {
-        action();
-        Console.WriteLine($"  ⚠  {title}: помилка НЕ спрацювала!");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"  ✓  {title}:");
-        Console.WriteLine($"       {ex.GetType().Name} — {ex.Message}");
-    }
+    Console.WriteLine($"Подій отримано: {changes}");
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

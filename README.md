@@ -9,56 +9,66 @@ README.md
 src/
     Core/
         Core.csproj
+        DomainException.cs              ← НОВЕ (лаб 8): виняток порушення бізнес-правил
         EnvironmentInfo.cs
         EnvironmentReport.cs
-        SampleData.cs                   ← зразки 17 товарів і 4 одиниці виміру (лаб 7)
-        Abstractions/                   ← контракти сховищ (лаб 5)
+        SampleData.cs                   ← зразки 17 товарів і 4 одиниці виміру
+        Abstractions/
             ICatalogStore.cs            ← інтерфейс сховища каталогу
-        Storage/                        ← реалізації сховищ (лаб 5)
+            ICatalogImporter.cs         ← НОВЕ (лаб 8): асинхронний та потоковий імпорт
+        Storage/
             InMemoryCatalogStore.cs     ← реалізація в оперативній пам'яті
             FileCatalogStore.cs         ← файлова реалізація (JSON)
-            CachingCatalogStore.cs      ← доп. завд. 1 (лаб 5): патерн Декоратор
-            StoreFactory.cs             ← доп. завд. 3 (лаб 5): фабрика сховищ
-        Services/                       ← бізнес-сервіси (лаб 5, 6)
-            CatalogService.cs           ← подія Changed, OnChanged, FindAll(Func)
-        Events/                         ← НОВЕ (лаб 6): доменні події
-            CatalogChangeKind.cs        ← enum: Added, Received, Issued, Removed
-            CatalogChangedEventArgs.cs  ← EventArgs: Id, Kind, Delta, QuantityAfter, At
-        Notifications/                  ← НОВЕ (лаб 6, доп. 1): контракти сповіщень
-            INotificationSink.cs        ← інтерфейс приймача сповіщень
+            CachingCatalogStore.cs      ← декоратор кешування
+            StoreFactory.cs             ← фабрика сховищ
+            JsonCatalogImporter.cs      ← НОВЕ (лаб 8): FileStream(useAsync) + IAsyncEnumerable
+        Services/
+            CatalogService.cs           ← бізнес-сервіс (події, імпорт, скасування, прогрес)
+        Events/                         ← доменні події
+            CatalogChangeKind.cs        ← enum дій з товаром
+            CatalogChangedEventArgs.cs  ← аргументи події зміни
+        Notifications/                  ← контракти сповіщень (Sink)
+            INotificationSink.cs        
         Dto/
-            ProductDto.cs               ← record, формат даних (лаб 3, 5)
-            ImportResult.cs             ← record, результат імпорту (лаб 3)
-            WarehouseDto.cs             ← record, формат складу (лаб 3)
-            OrderDto.cs                 ← record, формат замовлення (лаб 4)
-        Domain/                         ← сутності з бізнес-інваріантами (лаб 4)
-            Product.cs                  ← інкапсульований товар на складі
-            Order.cs                    ← агрегат замовлення + захищена колекція
-            OrderLine.cs                ← рядок замовлення (internal-конструктор)
-            OrderStatus.cs              ← enum Draft / Confirmed / Cancelled
+            ProductDto.cs               ← record, формат даних
+            ImportResult.cs             ← record, результат імпорту
+            WarehouseDto.cs             
+            OrderDto.cs                 
+        Domain/
+            Product.cs                  ← сутність товару (інваріанти, DomainException)
+            Order.cs                    
+            OrderLine.cs                
+            OrderStatus.cs              
         Import/
-            ProductCsvImporter.cs       ← оновлено (лаб 6, доп. 2): Action<string> callback
+            ProductCsvImporter.cs       
             ProductJsonImporter.cs
             MixedCsvImporter.cs
             ProductDomainMapper.cs
-        Reports/                        ← звіти LINQ to Objects (лаб 7)
-            StockLine.cs                ← DTO рядка звіту
-            GroupSummary.cs             ← DTO зведення групи
-            ReportService.cs            ← фільтри, топ-N, групи, агрегати, Join
-            EnumerableReportExtensions.cs ← власний TopBy<T>
+        Reports/                        ← звіти LINQ to Objects
+            StockLine.cs                
+            GroupSummary.cs             
+            ReportService.cs            
+            EnumerableReportExtensions.cs
     Cli/
         Cli.csproj
-        Program.cs                      ← Composition Root і вивід звітів
-        Notifications/                  ← НОВЕ (лаб 6, доп. 1): реалізації Sink
-            ConsoleSink.cs              ← виведення сповіщень у консоль
-            FileSink.cs                 ← запис сповіщень у logs/sink.log
+        Program.cs                      ← Composition Root, async Main, CancelKeyPress
+        Notifications/
+            ConsoleSink.cs
+            FileSink.cs
+tests/
+    Core.Tests/                         ← НОВЕ (лаб 8): xUnit тести (посилається ТІЛЬКИ на Core)
+        Core.Tests.csproj
+        TestData.cs                     ← фіксований тестовий набір даних
+        CatalogServiceTests.cs          ← тести бізнес-правил, інваріантів та подій
+        ReportServiceTests.cs           ← тести LINQ-звітів (детермінізм, LowStock)
+        ImportTests.cs                  ← тести async, CancellationToken, IAsyncEnumerable
 logs/
     app.log                             ← створюється автоматично під час запуску
 data/
     sample.csv
     sample.json
     mixed.csv
-    catalog.json                        ← з'являється при запуску з --file
+    catalog.json                        ← зразок каталогу товарів (17 позицій)
 ```
 
 ---
@@ -88,6 +98,57 @@ data/
 - [x] **6. Використано `Func` та `Action` у сигнатурах:** `FindAll(Func<Product, bool>)` та `Load(..., Action<string>?)`.
 - [x] **7. Файл `logs/app.log`:** формується через `Path.Combine`, каталог створюється кодом (`Directory.CreateDirectory`).
 - [x] **8. README оновлено, коміт `lab06`:** документація заповнена, проект протестовано.
+
+---
+
+## Лабораторна 8 — Асинхронність, скасування, доменні винятки та xUnit тести
+
+### Мета та архітектура
+У лабораторній роботі реалізовано повноцінний асинхронний пайплайн завантаження каталогу без блокування потоків, підтримано кооперативне скасування операцій, впроваджено винятки доменної моделі та покриття коду модульними тестами:
+* **async/await без блокувань:** відсутні псевдо-асинхронні обгортки на кшталт `Task.Run` для I/O-операцій. Повністю викорінено блокуючі виклики `.Result`, `.Wait()`, `.GetAwaiter().GetResult()` та антипатерн `async void` (за винятком обробників подій).
+* **Справжнє асинхронне введення/виведення:** операції читання файлів виконуються через `FileStream(..., options: FileOptions.Asynchronous)` та `JsonSerializer.DeserializeAsyncEnumerable` / `JsonSerializer.DeserializeAsync`.
+* **Кооперативне скасування (`CancellationToken`):** токен передається у всі асинхронні виклики та системні методи, а також обов'язково перевіряється в циклах обробки через `ct.ThrowIfCancellationRequested()`.
+* **Коректне завершення в CLI (Graceful cancellation):** під час натискання `Ctrl+C` (`Console.CancelKeyPress`) або завершення таймауту операції CLI не падає з аварійним стектрейсом, а перехоплює `OperationCanceledException` і виводить людино-читабельне повідомлення: `Імпорт скасовано.`.
+* **Доменні винятки (`DomainException`):** для помилок порушення бізнес-правил (списання більшої кількості товару, ніж є на залишку, операції з неіснуючим товаром, завантаження пошкоджених сутностей) використовується окремий типізований виняток `DomainException : Exception`. Базові валідації параметрів методів (`null`, порожні рядки) залишаються на `ArgumentException` / `ArgumentOutOfRangeException`.
+* **Тестовий проєкт `tests/Core.Tests`:**
+  * Додано в solution `CrossApp.slnx`.
+  * Посилається **виключно** на `src/Core/Core.csproj` (ізольований від консольного шару).
+  * 13 тестів у трьох тестових класах (усі успішні, тривалість < 150 мс).
+
+### Реалізовані тести
+1. **`CatalogServiceTests` (бізнес-інваріанти, доменні винятки, події):**
+   * `Issue_DecreasesQuantity_WhenStockSufficient` — коректне списання товару при достатньому залишку.
+   * `Issue_MoreThanQuantity_ThrowsDomainException` — списання більшої кількості, ніж є на залишку, викидає `DomainException` (не `InvalidOperationException`).
+   * `Receive_RaisesChangedEventOnce_WithCorrectPayload` — підняття події `Changed` рівно 1 раз із валідними параметрами (`Delta`, `QuantityAfter`).
+   * `Receive_NonExistentProduct_ThrowsDomainException` — оприбуткування для неіснуючого товару викидає `DomainException`.
+2. **`ReportServiceTests` (детермінізм та граничні випадки LINQ):**
+   * `LowStock_ReturnsCorrectItems_Theory` — параметризований тест `[Theory]` для перевірки дефіцитних залишків при різних порогах.
+   * `TopByQuantity_ReturnsDeterministicOrder_OnTies` — перевірка стійкості сортування залишків при однакових кількостях завдяки вторинним ключам SKU/Id.
+3. **`ImportTests` (асинхронність, скасування, токени, стрімінг):**
+   * `ImportAsync_WhenAlreadyCancelled_ThrowsOperationCanceledException` — реакція на попередньо скасований токен без зайвого введення/виведення.
+   * `ImportAsync_WithCorruptedData_ThrowsDomainException` — перевірка атомарності та очищення тимчасового файлу в блоці `finally`.
+   * `ImportAsync_ValidFile_ImportsAllProducts` — успішне асинхронне читання 17 позицій у сховище.
+   * `ImportAsync_IsIdempotent` — повторний імпорт не створює дублікатів (ідентичність за SKU).
+   * `ImportStreamAsync_StreamsProductsAndReportsProgress` — потокове читання з підтвердженням викликів `IProgress<int>`.
+   * `ImportAsync_LinkedTokens_TimeoutTriggersCancellation` — перевірка спрацьовування зв'язаних токенів саме через джерело таймауту.
+
+### Додаткові завдання (на вищий бал)
+1. **Потоковий імпорт (`IAsyncEnumerable<Product>`):** метод `StreamAsync` у `ICatalogImporter` та `JsonCatalogImporter` використовує `JsonSerializer.DeserializeAsyncEnumerable`, повертає асинхронний потік сутностей та підтримує `[EnumeratorCancellation]`. Метод `CatalogService.ImportStreamAsync` опрацьовує потік через `await foreach`.
+2. **Зв'язані токени скасування:** демонстрація та тест використання `CancellationTokenSource.CreateLinkedTokenSource(userCts.Token, timeoutCts.Token)`. Доведено, що скасування викликане саме таймаутом (`timeoutCts.IsCancellationRequested == true`).
+3. **Звіт про прогрес операції (`IProgress<int>`):** передача прогресу у відсотках від 0 до 100 під час читання великого файлу з відображенням у CLI без блокування основного потоку.
+4. **Збір покриття коду:** налаштовано та задокументовано збір метрик покриття тестами через інструмент `XPlat Code Coverage`.
+
+### Definition of Done (Самоперевірка)
+- [x] **1. Тестовий проєкт у solution:** `tests/Core.Tests/Core.Tests.csproj` включено в `CrossApp.slnx` та налаштовано для `net10.0`.
+- [x] **2. Чистота залежностей тестів:** `Core.Tests` має `ProjectReference` тільки на `Core` і не посилається на `Cli`.
+- [x] **3. Асинхронне I/O:** використання `FileStream` з `useAsync: true` / `FileOptions.Asynchronous` та `DeserializeAsync*`, без `Task.Run`.
+- [x] **4. Перевірка CancellationToken:** токен передано в усі виклики `*Async` та перевірено в циклах через `ThrowIfCancellationRequested()`.
+- [x] **5. Graceful cancellation у CLI:** перехоплення `OperationCanceledException` з виведенням зрозумілого повідомлення замість стектрейсу помилки.
+- [x] **6. Доменний виняток DomainException:** створено окремий тип винятку для бізнес-правил, відмінний від `ArgumentException`.
+- [x] **7. $\ge 5$ модульних тестів (фактично 13):** покривають інваріанти, події, звіти, помилки даних, стрімінг та скасування; усі проходять (`Passed: 13, Failed: 0`).
+- [x] **8. Нуль заборонених конструкцій:** 0 випадків `async void` (крім подій), `.Result`, `.Wait()`.
+- [x] **9. Додаткові завдання:** `IAsyncEnumerable`, `CreateLinkedTokenSource`, `IProgress<T>`, команда збору code coverage.
+- [x] **10. README оновлено, коміт `lab08`:** інструкції та перевірки зафіксовано в системі контролю версій.
 
 ---
 
@@ -195,20 +256,38 @@ SKU-017    Кабель UTP cat6                 -25 м
 
 ## Команди запуску
 
+### Запуск модульних тестів (Лабораторна 8)
 ```powershell
-# Лабораторна 7: звіти LINQ (за замовчуванням із --lab7 запускається report-top)
+# Запуск усіх 13 тестів (бізнес-інваріанти, доменні винятки, події, звіти, асинхронність, скасування):
+dotnet test
+
+# Збір метрик покриття коду (додаткове завдання 4):
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+### Демонстрація консольного застосунку (CLI)
+```powershell
+# Лабораторна 8 (за замовчуванням): асинхронний імпорт, скасування, IAsyncEnumerable, зв'язані токени
+dotnet run --project src/Cli
+
+# Запуск із явним файловим сховищем:
+dotnet run --project src/Cli -- --file
+
+# Штучна перевірка скасування за токеном або таймаутом:
+dotnet run --project src/Cli -- --cancel
+dotnet run --project src/Cli -- --timeout
+
+# Лабораторна 7: звіти LINQ
+dotnet run --project src/Cli -- --lab7
 dotnet run --project src/Cli -- report-top
 dotnet run --project src/Cli -- report-low
 dotnet run --project src/Cli -- report-groups
 dotnet run --project src/Cli -- report-sum
+dotnet run --project src/Cli -- report-deferred
+dotnet run --project src/Cli -- report-benchmark
 
 # Лабораторна 6 (демонстрація подій, підписки/відписки, логів, Func та Action):
-dotnet run --project src/Cli
-
-# Запуск у файловому режимі сховища:
-dotnet run --project src/Cli -- --file
-
-# Перевірка лог-файлу подій:
+dotnet run --project src/Cli -- --lab6
 Get-Content logs/app.log
 
 # Запуск попередніх лабораторних:

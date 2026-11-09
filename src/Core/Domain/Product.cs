@@ -11,13 +11,12 @@ namespace Core.Domain;
 ///   4. Початковий залишок не може бути від'ємним.
 ///   5. Кількість при приході має бути > 0.
 ///   6. Кількість при видачі має бути > 0.
-///   7. Не можна видати більше товару, ніж є в залишку.
+///   7. Не можна видати більше товару, ніж є в залишку (DomainException).
 /// </summary>
 public sealed class Product
 {
     // Приватне поле залишку — змінюється лише через RegisterArrival / Issue.
     private int _quantity;
-    
 
     // Автовластивості лише для читання: { get; } — присвоєння тільки в конструкторі.
     public string Id   { get; }
@@ -93,7 +92,7 @@ public sealed class Product
     /// Видає товар зі складу.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">Якщо amount ≤ 0.</exception>
-    /// <exception cref="InvalidOperationException">Якщо amount більше залишку.</exception>
+    /// <exception cref="DomainException">Якщо amount більше залишку.</exception>
     public void Issue(int amount)
     {
         // Інваріант 6: кількість видачі > 0
@@ -101,9 +100,9 @@ public sealed class Product
             throw new ArgumentOutOfRangeException(nameof(amount), amount,
                 "Кількість видачі має бути більшою за нуль");
 
-        // Інваріант 7: не видавати більше, ніж є
+        // Інваріант 7: не видавати більше, ніж є (доменний виняток тижня 8)
         if (amount > _quantity)
-            throw new InvalidOperationException(
+            throw new DomainException(
                 $"Не можна видати {amount}: залишок {Sku} = {_quantity}");
 
         // Перевірки пройдено — змінюємо стан
@@ -126,4 +125,3 @@ public sealed class Product
     public override string ToString() =>
         $"{Id} [{Sku}] {Name} — {Quantity} {Unit}";
 }
-

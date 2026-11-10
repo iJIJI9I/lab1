@@ -18,10 +18,12 @@ src/
             ICatalogImporter.cs         ← НОВЕ (лаб 8): асинхронний та потоковий імпорт
         Storage/
             InMemoryCatalogStore.cs     ← реалізація в оперативній пам'яті
-            FileCatalogStore.cs         ← файлова реалізація (JSON)
+            FileCatalogStore.cs         ← файлова реалізація (атомарний .tmp + File.Move, лаб 9)
             CachingCatalogStore.cs      ← декоратор кешування
             StoreFactory.cs             ← фабрика сховищ
             JsonCatalogImporter.cs      ← НОВЕ (лаб 8): FileStream(useAsync) + IAsyncEnumerable
+        Configuration/                  ← НОВЕ (лаб 9): налаштування застосунку
+            AppOptions.cs               ← StorageOptions, LoggingOptions, WarehouseOptions
         Services/
             CatalogService.cs           ← бізнес-сервіс (події, імпорт, скасування, прогрес)
         Events/                         ← доменні події
@@ -50,8 +52,10 @@ src/
             ReportService.cs            
             EnumerableReportExtensions.cs
     Cli/
-        Cli.csproj
-        Program.cs                      ← Composition Root, async Main, CancelKeyPress
+        Cli.csproj                      ← UserSecretsId, Microsoft.Extensions.Configuration.*
+        Program.cs                      ← маршрутизація команд (лаби 4-9), config stack
+        appsettings.json                ← базові налаштування (Production, Warning)
+        appsettings.Development.json    ← налаштування розробки (Development, Debug)
         Notifications/
             ConsoleSink.cs
             FileSink.cs
@@ -149,6 +153,88 @@ data/
 - [x] **8. Нуль заборонених конструкцій:** 0 випадків `async void` (крім подій), `.Result`, `.Wait()`.
 - [x] **9. Додаткові завдання:** `IAsyncEnumerable`, `CreateLinkedTokenSource`, `IProgress<T>`, команда збору code coverage.
 - [x] **10. README оновлено, коміт `lab08`:** інструкції та перевірки зафіксовано в системі контролю версій.
+
+---
+
+## Лабораторна 9 — Шляхи, JSON, конфігурація, Secrets
+
+### Мета та архітектура
+Забезпечено повну кросплатформність застосунку:
+* **Усунення абсолютних шляхів:** у проєкті відсутні жорстко закодовані Windows-шляхи (`C:\`, `\`) та Linux-шляхи (`/home/`). Усі шляхи обчислюються динамічно через `Path.Combine` та `Path.GetFullPath` відносно базового каталогу застосунку `AppContext.BaseDirectory`.
+* **Ієрархічний стек конфігурації (`IConfiguration`):**
+  1. `appsettings.json` (базовий, присутній у репозиторії)
+  2. `appsettings.{Environment}.json` (перевизначення для розробки)
+  3. `user-secrets` (конфіденційні дані розробника поза репозиторієм)
+  4. Змінні середовища (`CROSSAPP_...`)
+  5. Аргументи командного рядка (`--Storage:DataPath=...`)
+* **Типізовані налаштування (`Core.Configuration.AppOptions`):** біндинг конфігурації через `config.Get<AppOptions>()`, підтримка секцій `Storage`, `Logging`, `Warehouse` та `EnvironmentName`.
+* **Атомарний запис файлу (`FileCatalogStore`):** збереження через проміжний файл `.tmp` та подальший `File.Move(tmp, path, overwrite: true)`. Якщо процес перерветься — вихідний файл даних не пошкодиться.
+* **Людино-читабельний JSON з кирилицею:** серіалізація з використанням `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` та `JsonNamingPolicy.CamelCase` — українські літери записуються як є, без послідовностей `\uXXXX`.
+
+### Таблиця конфігураційних ключів
+
+| Ключ конфігурації | Змінна середовища | Значення за замовчуванням | Призначення |
+|---|---|---|---|
+| `Storage:DataPath` | `CROSSAPP_Storage__DataPath` | `"data"` | Каталог для зберігання файлу даних |
+| `Storage:FileName` | `CROSSAPP_Storage__FileName` | `"items.json"` | Ім'я файлу каталогу |
+| `Logging:MinimumLevel` | `CROSSAPP_Logging__MinimumLevel` | `"Warning"` (Prod) / `"Debug"` (Dev) | Мінімальний рівень логування |
+| `Warehouse:DefaultUnit` | `CROSSAPP_Warehouse__DefaultUnit` | `"од"` (Prod) / `"мішок"` (Dev) | Доменне налаштування одиниці виміру |
+| `Integration:ApiKey` | `CROSSAPP_Integration__ApiKey` | *З user-secrets* (`"local-dev-key"`) | Навчальний секретний ключ інтеграції |
+| `EnvironmentName` | `CROSSAPP_ENVIRONMENT` | `"Development"` | Назва активного профілю середовища |
+
+> **Спеціальна змінна:** Проста змінна середовища `CROSSAPP_DATA_PATH` перекриває `Storage:DataPath`.
+
+### Приклади встановлення змінних середовища
+
+**PowerShell (Windows):**
+```powershell
+# Зміна каталогу даних:
+$env:CROSSAPP_DATA_PATH = "C:\Users\User\custom_data"
+
+# Зміна профілю середовища:
+$env:CROSSAPP_ENVIRONMENT = "Production"
+
+# Перевизначення вкладеного ключа (подвійне підкреслення):
+$env:CROSSAPP_Storage__FileName = "custom_catalog.json"
+$env:CROSSAPP_Integration__ApiKey = "prod-secret-key-12345"
+
+# Очищення змінної:
+$env:CROSSAPP_DATA_PATH = $null
+```
+
+**Bash (Linux / macOS):**
+```bash
+export CROSSAPP_DATA_PATH="/tmp/data"
+export CROSSAPP_ENVIRONMENT="Production"
+export CROSSAPP_Storage__FileName="custom_catalog.json"
+export CROSSAPP_Integration__ApiKey="prod-secret-key-12345"
+```
+
+### Робота з User Secrets
+Секрети зберігаються **поза репозиторієм** у профілі користувача:
+* **Windows:** `%APPDATA%\Microsoft\UserSecrets\<UserSecretsId>\secrets.json`
+* **Linux / macOS:** `~/.microsoft/usersecrets/<UserSecretsId>/secrets.json`
+
+```powershell
+# Ініціалізація (вже виконано, ID записано в Cli.csproj):
+dotnet user-secrets init --project src/Cli
+
+# Встановлення секретного ключа:
+dotnet user-secrets set "Integration:ApiKey" "local-dev-key" --project src/Cli
+
+# Перевірка списку секретів:
+dotnet user-secrets list --project src/Cli
+```
+
+### Definition of Done (Самоперевірка Лабораторної 9)
+- [x] **1. Експорт та імпорт JSON:** команда `export` виводить вміст сховища у читабельному JSON, коректно працює десеріалізація без `\uXXXX`.
+- [x] **2. Відсутність абсолютних шляхів і паролів:** пошук `"C:\"`, `"/home/"`, `"\\"` по коду `src` дає порожній результат.
+- [x] **3. `appsettings.json` у репозиторії без секретів:** у файлах конфігурації немає паролів чи токенів.
+- [x] **4. Перевизначення `CROSSAPP_DATA_PATH`:** проста змінна середовища пріоритетно перекриває шлях з конфігурації.
+- [x] **5. Читання секрету:** `Integration:ApiKey` читається з `user-secrets` або змінних середовища, друкується лише довжина.
+- [x] **6. Переносимість шляхів:** запуск з кореня репозиторію та з каталогу `src/Cli` веде до одного й того самого файлу через `AppContext.BaseDirectory`.
+- [x] **7. Атомарний запис:** реалізовано патерн `.tmp` + `File.Move(overwrite: true)` у `FileCatalogStore`.
+- [x] **8. Сумісність:** Лабораторна 8 запускається за замовчуванням (тести зелені, 13/13). Створено коміт `lab09`.
 
 ---
 
@@ -267,6 +353,15 @@ dotnet test --collect:"XPlat Code Coverage"
 
 ### Демонстрація консольного застосунку (CLI)
 ```powershell
+# Лабораторна 9: експорт каталогу в JSON (очікуваний вивід за варіантом "Склад"):
+dotnet run --project src/Cli -- export
+
+# Лабораторна 9: повна демонстрація (шляхи, переносимість, імпорт/експорт, атомарність, секрети):
+dotnet run --project src/Cli -- --lab9
+
+# Лабораторна 9: перевірка списку User Secrets:
+dotnet user-secrets list --project src/Cli
+
 # Лабораторна 8 (за замовчуванням): асинхронний імпорт, скасування, IAsyncEnumerable, зв'язані токени
 dotnet run --project src/Cli
 

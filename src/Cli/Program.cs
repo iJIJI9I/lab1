@@ -132,7 +132,10 @@ static async Task RunLab9DemoAsync(
     // ── 1. Показати шлях до файлу та API-ключ (завдання 5, 6) ───────────────
     Console.WriteLine($"Файл даних    : {dataFilePath}");
     Console.WriteLine($"Профіль       : {config["EnvironmentName"]}");
-    Console.WriteLine($"Рівень логу   : {config["Logging:MinimumLevel"]}");
+    var minLogLevel = config["Logging:MinimumLevel:Default"]
+        ?? config["Logging:MinimumLevel"]
+        ?? "Debug";
+    Console.WriteLine($"Рівень логу   : {minLogLevel}");
     Console.WriteLine(apiKey is null
         ? "ApiKey         : не заданий"
         : $"ApiKey         : присутній, довжина {apiKey.Length}");

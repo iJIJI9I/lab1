@@ -42,11 +42,18 @@ public sealed class StorageOptions
 }
 
 /// <summary>
-/// Налаштування логування. Ключ конфігурації: Logging:MinimumLevel.
+/// Налаштування логування. Ключ конфігурації: Logging:MinimumLevel:Default.
 /// </summary>
 public sealed class LoggingOptions
 {
-    public string MinimumLevel { get; init; } = "Information";
+    public MinimumLevelOptions MinimumLevel { get; init; } = new();
+}
+
+public sealed class MinimumLevelOptions
+{
+    public string Default { get; init; } = "Information";
+
+    public override string ToString() => Default;
 }
 
 /// <summary>

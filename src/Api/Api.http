@@ -1,0 +1,89 @@
+@Api_HostAddress = http://localhost:5080
+
+### 1. Перевірка працездатності (Health Check)
+GET {{Api_HostAddress}}/health
+Accept: application/json
+
+### 2. Специфікація OpenAPI v1
+GET {{Api_HostAddress}}/openapi/v1.json
+Accept: application/json
+
+### 3. Отримати список усіх товарів
+GET {{Api_HostAddress}}/api/products
+Accept: application/json
+
+### 4. Пагінація та пошук (Додаткове завдання 1)
+GET {{Api_HostAddress}}/api/products?page=1&pageSize=5&search=Цемент
+Accept: application/json
+
+### 5. Товари з дефіцитним залишком (Варіант Склад)
+GET {{Api_HostAddress}}/api/products/low-stock?threshold=10
+Accept: application/json
+
+### 6. Створити новий товар (POST -> 201 Created)
+# @name createProduct
+POST {{Api_HostAddress}}/api/products
+Content-Type: application/json
+
+{
+  "sku": "A-100",
+  "name": "Цемент М400",
+  "unit": "мішок",
+  "quantity": 40
+}
+
+### 7. Отримати створений товар за ID (GET -> 200 OK)
+@createdId = {{createProduct.response.body.id}}
+GET {{Api_HostAddress}}/api/products/{{createdId}}
+Accept: application/json
+
+### 8. Валідація: спроба створення некоректного товару (POST -> 400 Bad Request)
+POST {{Api_HostAddress}}/api/products
+Content-Type: application/json
+
+{
+  "sku": "",
+  "name": "X",
+  "unit": "",
+  "quantity": -1
+}
+
+### 9. Повне оновлення товару (PUT -> 200 OK)
+PUT {{Api_HostAddress}}/api/products/{{createdId}}
+Content-Type: application/json
+
+{
+  "sku": "A-100",
+  "name": "Цемент М400 оновлений 50кг",
+  "unit": "мішок",
+  "quantity": 65
+}
+
+### 10. Оновлення товару з невалідними даними (PUT -> 400 Bad Request)
+PUT {{Api_HostAddress}}/api/products/{{createdId}}
+Content-Type: application/json
+
+{
+  "sku": "A-100",
+  "name": "",
+  "unit": "мішок",
+  "quantity": 65
+}
+
+### 11. Оновлення неіснуючого товару (PUT -> 404 Not Found)
+PUT {{Api_HostAddress}}/api/products/non-existent-id
+Content-Type: application/json
+
+{
+  "sku": "NON-EXIST",
+  "name": "Неіснуючий товар",
+  "unit": "шт",
+  "quantity": 10
+}
+
+### 12. Видалення товару (DELETE -> 204 No Content)
+DELETE {{Api_HostAddress}}/api/products/{{createdId}}
+
+### 13. Перевірка після видалення: запит за тим самим ID (GET -> 404 Not Found)
+GET {{Api_HostAddress}}/api/products/{{createdId}}
+Accept: application/json

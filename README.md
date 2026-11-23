@@ -8,21 +8,21 @@ CrossApp.slnx
 README.md
 src/
     Core/
-        Core.csproj
-        DomainException.cs              ← НОВЕ (лаб 8): виняток порушення бізнес-правил
+        Core.csproj                     ← multi-targeting (net9.0;net10.0)
+        DomainException.cs              ← виняток порушення бізнес-правил
         EnvironmentInfo.cs
         EnvironmentReport.cs
         SampleData.cs                   ← зразки 17 товарів і 4 одиниці виміру
         Abstractions/
             ICatalogStore.cs            ← інтерфейс сховища каталогу
-            ICatalogImporter.cs         ← НОВЕ (лаб 8): асинхронний та потоковий імпорт
+            ICatalogImporter.cs         ← асинхронний та потоковий імпорт
         Storage/
-            InMemoryCatalogStore.cs     ← реалізація в оперативній пам'яті
+            InMemoryCatalogStore.cs     ← потокобезпечна in-memory реалізація (lock, лаб 10)
             FileCatalogStore.cs         ← файлова реалізація (атомарний .tmp + File.Move, лаб 9)
             CachingCatalogStore.cs      ← декоратор кешування
             StoreFactory.cs             ← фабрика сховищ
-            JsonCatalogImporter.cs      ← НОВЕ (лаб 8): FileStream(useAsync) + IAsyncEnumerable
-        Configuration/                  ← НОВЕ (лаб 9): налаштування застосунку
+            JsonCatalogImporter.cs      ← FileStream(useAsync) + IAsyncEnumerable
+        Configuration/                  ← налаштування застосунку (лаб 9)
             AppOptions.cs               ← StorageOptions, LoggingOptions, WarehouseOptions
         Services/
             CatalogService.cs           ← бізнес-сервіс (події, імпорт, скасування, прогрес)
@@ -59,20 +59,33 @@ src/
         Notifications/
             ConsoleSink.cs
             FileSink.cs
+    Api/                                ← НОВЕ (лаб 10): Minimal API веб-сервіс
+        Api.csproj                      ← Microsoft.AspNetCore.OpenApi, Scalar, FluentValidation
+        Program.cs                      ← конфігурація DI, ProblemDetails, OpenAPI, Scalar UI
+        Api.http                        ← HTTP-запити для тестування ендпоінтів
+        appsettings.json
+        appsettings.Development.json
+        Properties/
+            launchSettings.json         ← фіксований порт 5080
+        Contracts/
+            ProductDto.cs               ← вихідний контракт товару (ізоляція домену)
+            SaveProductRequest.cs       ← вхідний контракт + валідатор FluentValidation
+            PagedResult.cs              ← контракт пагінації результатів
+        Endpoints/
+            ProductEndpoints.cs         ← маршрути CRUD, low-stock, пагінація, TypedResults
+        Infrastructure/
+            DomainExceptionHandler.cs   ← мапінг DomainException -> 409 Conflict ProblemDetails
+            ValidationFilter.cs         ← EndpointFilter для FluentValidation (400 Bad Request)
 tests/
-    Core.Tests/                         ← НОВЕ (лаб 8): xUnit тести (посилається ТІЛЬКИ на Core)
+    Core.Tests/                         ← xUnit тести ядра (посилається ТІЛЬКИ на Core)
         Core.Tests.csproj
         TestData.cs                     ← фіксований тестовий набір даних
         CatalogServiceTests.cs          ← тести бізнес-правил, інваріантів та подій
         ReportServiceTests.cs           ← тести LINQ-звітів (детермінізм, LowStock)
         ImportTests.cs                  ← тести async, CancellationToken, IAsyncEnumerable
-logs/
-    app.log                             ← створюється автоматично під час запуску
-data/
-    sample.csv
-    sample.json
-    mixed.csv
-    catalog.json                        ← зразок каталогу товарів (17 позицій)
+    Api.Tests/                          ← НОВЕ (лаб 10): інтеграційні тести API
+        Api.Tests.csproj
+        ProductApiTests.cs              ← WebApplicationFactory тести (CRUD, валідація, 404, 409)
 ```
 
 ---
@@ -340,16 +353,149 @@ SKU-017    Кабель UTP cat6                 -25 м
 
 ---
 
+## Лабораторна 10 — Minimal API: CRUD над Core, валідація, OpenAPI (Scalar)
+
+### Мета та архітектура
+Створено другий незалежний вхідний проєкт `src/Api` (Minimal API), що працює над спільною доменною моделлю та сервісами бібліотеки `src/Core` паралельно з консольним клієнтом `src/Cli`:
+* **Архітектурний розподіл:**
+  * `src/Core` — бізнес-правила, інваріанти, сховища та сервіси (не залежить від веб-шару).
+  * `src/Api` — HTTP-хост на базі ASP.NET Core Minimal API (посилається на `Core`).
+  * `tests/Api.Tests` — окремий тестовий проєкт для наскрізних інтеграційних тестів через `WebApplicationFactory`.
+* **Домен предметної області ("Склад"):** сутність товару з атрибутами `Id`, `Sku`, `Name`, `Unit`, `Quantity`, `Note`.
+* **Ізоляція доменної моделі (DTO):**
+  * Вхідний контракт: `SaveProductRequest(Sku, Name, Unit, Quantity, Note)` — клієнт не може підробити `Id`.
+  * Вихідний контракт: `ProductDto(Id, Sku, Name, Unit, Quantity, Note)` — сутність `Product` ніколи не повертається напряму в JSON.
+* **Централізована валідація (RFC 9457 `ValidationProblemDetails`):**
+  * Помилки валідації повертають статус `400 Bad Request` зі словником `errors` по кожному полю. Застосунок гарантовано не падає з кодом `500 Internal Server Error`.
+* **Впровадження залежностей (Dependency Injection):**
+  * `ICatalogStore` зареєстровано як **Singleton** (`InMemoryCatalogStore`), забезпечуючи спільний стан між HTTP-запитами.
+  * Реалізацію `InMemoryCatalogStore` зроблено **потокобезпечною** через блокування `lock (_lock)`.
+  * `CatalogService` зареєстровано як **Scoped/Transient**.
+* **OpenAPI та Scalar UI:**
+  * Ендпоінт специфікації: `GET /openapi/v1.json`.
+  * Інтерактивна веб-документація: `GET /scalar/v1`.
+  * **Захист у продакшені:** підключення OpenAPI та Scalar активується **суворо в режимі `Development`** (`if (app.Environment.IsDevelopment())`).
+* **Обробка винятків без витоку даних:**
+  * Використано `app.UseExceptionHandler()` та `builder.Services.AddProblemDetails()`.
+  * Клієнт отримує стандартний об'єкт `ProblemDetails`, стек-трейс та внутрішні деталі сервера приховані.
+* **Фіксований порт:** `http://localhost:5080` налаштовано у `src/Api/Properties/launchSettings.json`.
+
+---
+
+### Таблиця HTTP-маршрутів (`/api/products`)
+
+| HTTP-метод | Маршрут | Опис | Очікувані коди відповідей |
+|---|---|---|---|
+| `GET` | `/api/products` | Отримати всі товари або сторінку (`?page=1&pageSize=20&search=...`) | `200 OK` (`PagedResult<ProductDto>`) |
+| `GET` | `/api/products/{id}` | Отримати один товар за унікальним GUID | `200 OK` (`ProductDto`), `404 Not Found` |
+| `POST` | `/api/products` | Створити новий товар у каталозі | `201 Created` (`Location: /api/products/{id}`), `400 Bad Request` |
+| `PUT` | `/api/products/{id}` | Повне оновлення існуючого товару | `200 OK` (`ProductDto`), `400 Bad Request`, `404 Not Found` |
+| `DELETE` | `/api/products/{id}` | Видалити товар зі сховища | `204 NoContent`, `404 Not Found` |
+| `GET` | `/api/products/low-stock` | Доменний звіт: позиції з залишком $\le$ threshold (`?threshold=5`) | `200 OK` (`IEnumerable<ProductDto>`) |
+| `GET` | `/health` | Healthcheck стану працездатності сервісу | `200 OK` (`{"status":"ok"}`) |
+
+---
+
+### Додаткові завдання (всі 4 виконано на максимальний бал)
+
+1. **Пагінація та пошук (`PagedResult<T>`):**
+   * Ендпоінт `GET /api/products?page=1&pageSize=10&search=цемент` підтримує параметри сторінки, розміру сторінки та пошуку за підрядком у назві або SKU.
+   * Повертає типізовану структуру: `items`, `page`, `pageSize`, `totalCount`, `totalPages`, `hasPreviousPage`, `hasNextPage`.
+2. **Інтеграція FluentValidation через EndpointFilter:**
+   * Реалізовано клас `SaveProductRequestValidator : AbstractValidator<SaveProductRequest>` з бізнес-правилами (непорожні SKU, Name, Unit, невід'ємний залишок).
+   * Створено generic-фільтр `ValidationFilter<T> : IEndpointFilter`, підключений через `.AddEndpointFilter<ValidationFilter<SaveProductRequest>>()`.
+   * Автоматично трансформує помилки FluentValidation у стандартизований RFC 9457 `ValidationProblemDetails`.
+3. **Мапінг `DomainException` -> 409 Conflict через `IExceptionHandler`:**
+   * Створено `DomainExceptionHandler : IExceptionHandler`.
+   * При спробі створити товар із дублюючим SKU або порушенні інваріантів домену сервер повертає чіткий статус `409 Conflict` з типом `ProblemDetails` замість `500 Internal Server Error`.
+4. **Наскрізні інтеграційні тести через `WebApplicationFactory`:**
+   * Проєкт `tests/Api.Tests` містить 7 тестів у класі `ProductApiTests : IClassFixture<WebApplicationFactory<Program>>`:
+     * `GetProducts_ReturnsSuccessAndList` — отримання списку.
+     * `GetProductById_ReturnsNotFound_WhenNotExists` — коректний 404.
+     * `PostProduct_WithInvalidData_Returns400ValidationProblemDetails` — перевірка валідатора і RFC 9457.
+     * `PostProduct_And_GetById_FullCrudCycle` — повний цикл: POST 201 -> перевірка `Location` -> GET 200 -> PUT 200 -> DELETE 204 -> GET 404.
+     * `PostProduct_WithDuplicateSku_Returns409Conflict` — перевірка обробника `DomainException`.
+     * `GetLowStock_ReturnsFilteredItems` — перевірка доменного звіту дефіциту.
+     * `GetProducts_WithPagination_ReturnsPagedResult` — перевірка пагінатора.
+
+---
+
+### Definition of Done (Самоперевірка Лабораторної 10)
+- [x] **1. Друга точка входу:** створено проєкт `src/Api`, обидва застосунки (`Cli` та `Api`) використовують спільне ядро `Core`.
+- [x] **2. CRUD endpoints:** реалізовано всі 5 базових маршрутів під префіксом `/api/products` + доменний маршрут `low-stock`.
+- [x] **3. Ізоляція домену (DTO):** запити приймають `SaveProductRequest`, відповіді повертають `ProductDto`. Сутність `Product` інкапсульована.
+- [x] **4. Валідація без 500:** некоректні дані повертають 400 Bad Request з `ValidationProblemDetails`.
+- [x] **5. OpenAPI та Scalar UI:** документація `/scalar/v1` та схема `/openapi/v1.json` доступні у Development та відключені у Production.
+- [x] **6. Singleton DI сховища:** `ICatalogStore` зареєстровано як Singleton, забезпечено потокобезпечність `InMemoryCatalogStore`.
+- [x] **7. Обробка винятків:** `UseExceptionHandler` + `AddProblemDetails` приховують технічні стектрейси.
+- [x] **8. Фіксований порт:** налаштовано порт `5080` у `launchSettings.json`.
+- [x] **9. Сценарій `Api.http`:** файл містить повну послідовність запитів для тестування життєвого циклу API.
+- [x] **10. Усі 4 додаткові завдання:** пагінація `PagedResult`, FluentValidation `EndpointFilter`, `DomainExceptionHandler` (409 Conflict), тести `WebApplicationFactory` (7/7 passed).
+- [x] **11. CLI та Core.Tests не зламані:** консольний застосунок працює без змін, усі 13 тестів `Core.Tests` зелені.
+
+---
+
 ## Команди запуску
 
-### Запуск модульних тестів (Лабораторна 8)
+### Запуск тестів (Лабораторні 8 та 10)
 ```powershell
-# Запуск усіх 13 тестів (бізнес-інваріанти, доменні винятки, події, звіти, асинхронність, скасування):
+# Запуск УСІХ тестів розв'язку (13 модульних Core.Tests + 7 інтеграційних Api.Tests):
 dotnet test
 
-# Збір метрик покриття коду (додаткове завдання 4):
-dotnet test --collect:"XPlat Code Coverage"
+# Запуск суто інтеграційних тестів Minimal API (WebApplicationFactory):
+dotnet test tests/Api.Tests/Api.Tests.csproj
+
+# Запуск суто модульних тестів ядра (бізнес-інваріанти, скасування, стрімінг):
+dotnet test tests/Core.Tests/Core.Tests.csproj
 ```
+
+### Запуск та тестування веб-сервісу Minimal API (Лабораторна 10)
+```powershell
+# 1. Запуск API сервера на порті 5080:
+dotnet run --project src/Api
+
+# 2. Документація Scalar UI у браузері:
+# Відкрийте: http://localhost:5080/scalar/v1
+# Специфікація OpenAPI: http://localhost:5080/openapi/v1.json
+```
+
+**Приклади curl-запитів для перевірки всіх операцій:**
+```powershell
+# Перевірка працездатності:
+curl -i http://localhost:5080/health
+
+# 1. Отримати всі товари:
+curl -i http://localhost:5080/api/products
+
+# 2. Пагінація та пошук:
+curl -i "http://localhost:5080/api/products?page=1&pageSize=5&search=цемент"
+
+# 3. Створити новий товар:
+curl -i -X POST http://localhost:5080/api/products `
+  -H "Content-Type: application/json" `
+  -d '{"sku":"CEM-400","name":"Портландцемент 50кг","unit":"мішок","quantity":35,"note":"Склад 1"}'
+
+# 4. Отримати створений товар за ID:
+curl -i http://localhost:5080/api/products/<GUID_ID>
+
+# 5. Оновити товар:
+curl -i -X PUT http://localhost:5080/api/products/<GUID_ID> `
+  -H "Content-Type: application/json" `
+  -d '{"sku":"CEM-400","name":"Портландцемент М500","unit":"мішок","quantity":50,"note":"Оновлено"}'
+
+# 6. Перевірка валідації (поверне 400 ValidationProblemDetails, не 500):
+curl -i -X POST http://localhost:5080/api/products `
+  -H "Content-Type: application/json" `
+  -d '{"sku":"","name":"","unit":"","quantity":-10}'
+
+# 7. Звіт позицій з низьким залишком (дефіцит):
+curl -i "http://localhost:5080/api/products/low-stock?threshold=10"
+
+# 8. Видалити товар:
+curl -i -X DELETE http://localhost:5080/api/products/<GUID_ID>
+```
+
+---
 
 ### Демонстрація консольного застосунку (CLI)
 ```powershell

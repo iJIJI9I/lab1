@@ -125,6 +125,27 @@ static async Task RunLab9DemoAsync(
         return;
     }
 
+    if (command == "import")
+    {
+        string path = File.Exists(dataFilePath)
+            ? dataFilePath
+            : (File.Exists(Path.Combine("data", "items.json")) ? Path.GetFullPath(Path.Combine("data", "items.json")) : dataFilePath);
+
+        Console.WriteLine($"Файл даних : {path}");
+        if (!File.Exists(path))
+        {
+            Console.WriteLine($"Помилка: такого файлу немає ({path})");
+            return;
+        }
+
+        string jsonContent = File.ReadAllText(path);
+        var store = new FileCatalogStore(dataFilePath);
+        var service = new CatalogService(store);
+        int count = ImportFromJson(jsonContent, service);
+        Console.WriteLine($"Успішно імпортовано {count} записів.");
+        return;
+    }
+
     Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
     Console.WriteLine("║   ЛАБОРАТОРНА РОБОТА 9: Шляхи, JSON, конфігурація, Secrets  ║");
     Console.WriteLine("╚══════════════════════════════════════════════════════════════╝\n");

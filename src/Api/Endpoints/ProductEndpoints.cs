@@ -79,6 +79,9 @@ public static class ProductEndpoints
             if (!request.TryValidate(out var errors))
                 return TypedResults.ValidationProblem(errors);
 
+            if (store.List().Any(p => string.Equals(p.Sku, request.Sku, StringComparison.OrdinalIgnoreCase)))
+                throw new Core.DomainException($"Товар із артикулом (SKU) '{request.Sku}' уже зареєстровано в каталозі.");
+
             var id = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant();
             var created = Product.Create(id, request.Sku, request.Name, request.Unit, request.Quantity);
 
@@ -101,6 +104,10 @@ public static class ProductEndpoints
 
             if (store.GetById(id) is null)
                 return TypedResults.NotFound();
+
+            if (store.List().Any(p => !string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase) &&
+                                      string.Equals(p.Sku, request.Sku, StringComparison.OrdinalIgnoreCase)))
+                throw new Core.DomainException($"Товар із артикулом (SKU) '{request.Sku}' уже зареєстровано в каталозі.");
 
             // PUT замінює стан: get-only поля не мутуємо, створюємо валідний Product з тим самим id
             var replacement = Product.Create(id, request.Sku, request.Name, request.Unit, request.Quantity);

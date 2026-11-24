@@ -148,4 +148,17 @@ public sealed class ProductApiTests : IClassFixture<WebApplicationFactory<Progra
         Assert.NotNull(lowStock);
         Assert.All(lowStock, item => Assert.True(item.Quantity < 10));
     }
+
+    [Fact]
+    public async Task Post_DuplicateSku_Returns409Conflict()
+    {
+        var duplicateRequest = new SaveProductRequest(
+            Sku: "SKU-001",
+            Name: "Спроба дубліката",
+            Unit: "шт",
+            Quantity: 10);
+
+        var response = await _client.PostAsJsonAsync("/api/products", duplicateRequest);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
 }
